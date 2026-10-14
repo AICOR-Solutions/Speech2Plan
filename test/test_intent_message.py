@@ -1,51 +1,126 @@
 from __future__ import annotations
 
+import json
+
+import pytest
 from hri_actions_msgs.msg import Intent
 
 from speech2plan.contract import (
     EntityConstraint,
     IntentName,
     ParsedInstruction,
+    Qualifier,
     RoleBinding,
+    RoleConfidence,
     ThematicRole,
 )
 from speech2plan.grounding import Grounder
-from speech2plan.ros.intent_node import Speech2PlanNode
+from speech2plan.intent_message import GroundingStatus, PayloadKey, PublishedIntent
+from speech2plan.placement import QualifierAttribute
 from speech2plan.world_source import PrototypeWard
 
-# %% message construction without a ROS runtime
+# %% fixtures
 
 
-def build_message(utterance: str, entity_type: str, role: ThematicRole) -> Intent:
+@pytest.fixture(scope="module")
+def ward():
+    return PrototypeWard().load()
+
+
+def publish(ward, utterance: str, role: ThematicRole, **constraint) -> Intent:
     """The Intent the node would publish for one parsed role."""
-    world = PrototypeWard().load()
     instruction = ParsedInstruction(
         utterance=utterance,
         speaker=Intent.UNKNOWN_AGENT,
         intent=IntentName.BRING_OBJECT,
-        roles=[
-            RoleBinding(
-                role=role, constraint=EntityConstraint(entity_type=entity_type)
-            )
-        ],
+        roles=[RoleBinding(role=role, constraint=EntityConstraint(**constraint))],
+        intent_confidence=0.9,
+        confidence_per_role=[RoleConfidence(role=role, confidence=0.8)],
     )
-    grounder = Grounder(world=world)
-    return Speech2PlanNode.to_message(
-        None, instruction, grounder.ground(instruction)
-    )
+    grounder = Grounder(world=ward)
+    return PublishedIntent(
+        instruction=instruction, outcomes=grounder.ground(instruction)
+    ).as_message()
 
 
-def test_a_resolved_role_carries_the_entity_name():
-    message = build_message("take the plate", "Plate", ThematicRole.OBJECT)
-    assert '"object": "plate"' in message.data
+def constraints(message: Intent) -> list:
+    return json.loads(message.data)[PayloadKey.OTHER_DATA][PayloadKey.CONSTRAINTS]
 
 
-def test_an_ambiguous_role_falls_back_to_the_entity_type():
-    message = build_message("go to the kitchen", "Kitchen", ThematicRole.GOAL)
-    assert '"goal": "Kitchen"' in message.data
+# %% the thematic roles
 
 
-def test_the_utterance_travels_as_input():
-    message = build_message("take the plate", "Plate", ThematicRole.OBJECT)
-    assert '"input": "take the plate"' in message.data
+def test_a_resolved_role_carries_the_entity_name(ward):
+    message = publish(ward, "take the table", ThematicRole.OBJECT, entity_type="Table")
+    assert json.loads(message.data)[ThematicRole.OBJECT] == "table"
+
+
+def test_an_ambiguous_role_is_not_published_as_a_role(ward):
+    message = publish(ward, "take the plate", ThematicRole.OBJECT, entity_type="Plate")
+    assert ThematicRole.OBJECT not in json.loads(message.data)
+
+
+def test_the_utterance_travels_as_input(ward):
+    message = publish(ward, "take the table", ThematicRole.OBJECT, entity_type="Table")
+    assert json.loads(message.data)[ThematicRole.INPUT] == "take the table"
     assert message.modality == Intent.MODALITY_SPEECH
+    assert message.priority == 128
+
+
+# %% the semantic constraints
+
+
+def test_a_resolved_constraint_reports_its_entity_and_score(ward):
+    message = publish(
+        ward,
+        "take the cup in the kitchen upstairs",
+        ThematicRole.OBJECT,
+        entity_type="Cup",
+        qualifiers=[Qualifier(attribute=QualifierAttribute.NAME, value="second_cup")],
+    )
+    assert constraints(message) == [
+        {
+            PayloadKey.ROLE: ThematicRole.OBJECT,
+            PayloadKey.STATUS: GroundingStatus.RESOLVED,
+            PayloadKey.CONFIDENCE: 0.8,
+            PayloadKey.ENTITY: "second_cup",
+            PayloadKey.ASSUMED: False,
+            PayloadKey.ENTITY_TYPE: "Cup",
+            PayloadKey.QUALIFIERS: [
+                {PayloadKey.ATTRIBUTE: "name", PayloadKey.VALUE: "second_cup"}
+            ],
+            PayloadKey.CANDIDATES: [],
+        }
+    ]
+
+
+def test_an_ambiguous_constraint_reports_what_matched(ward):
+    message = publish(ward, "take the plate", ThematicRole.OBJECT, entity_type="Plate")
+    record = constraints(message)[0]
+    assert record[PayloadKey.STATUS] == GroundingStatus.AMBIGUOUS
+    assert record[PayloadKey.ENTITY] is None
+    assert record[PayloadKey.CANDIDATES] == ["plate", "other_plate"]
+
+
+def test_an_assumed_role_is_published_with_what_it_ruled_out(ward):
+    message = publish(ward, "go to the kitchen", ThematicRole.GOAL, entity_type="Kitchen")
+    record = constraints(message)[0]
+    assert json.loads(message.data)[ThematicRole.GOAL] == "kitchen_ground"
+    assert record[PayloadKey.STATUS] == GroundingStatus.RESOLVED
+    assert record[PayloadKey.ASSUMED] is True
+    assert record[PayloadKey.CANDIDATES] == ["kitchen_first"]
+
+
+def test_an_unfilled_role_is_reported_without_a_type(ward):
+    instruction = ParsedInstruction(
+        utterance="bring this here",
+        speaker=Intent.UNKNOWN_AGENT,
+        intent=IntentName.BRING_OBJECT,
+        unfilled_roles=[ThematicRole.OBJECT],
+        intent_confidence=0.9,
+    )
+    message = PublishedIntent(instruction=instruction, outcomes=[]).as_message()
+
+    assert ThematicRole.OBJECT not in json.loads(message.data)
+    assert constraints(message)[0][PayloadKey.STATUS] == GroundingStatus.UNFILLED
+    assert constraints(message)[0][PayloadKey.ENTITY_TYPE] is None

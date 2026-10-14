@@ -1,39 +1,33 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from datetime import timedelta
+from enum import StrEnum
+from typing import Optional
 
 import rclpy
+from hri import HRIListener, Voice
 from hri_actions_msgs.msg import Intent
-from hri_msgs.msg import IdsList, LiveSpeech
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from semantic_digital_twin.world import World
-from std_msgs.msg import String
 
-from speech2plan.contract import ParsedInstruction, ThematicRole
-from speech2plan.grounding import Ambiguity, Grounder, ResolvedRole
+from speech2plan.contract import ParsedInstruction
+from speech2plan.dialogue import Clarification, Clarifier
+from speech2plan.exceptions import SkillCallFailed
+from speech2plan.grounding import Ambiguity, Grounder
+from speech2plan.intent_message import PublishedIntent
 from speech2plan.parsing.instruction_parser import InstructionParser
 from speech2plan.world_source import WorldSource
 
 # %% topic names
 
 
-class Topic:
-    """ROS4HRI topics this node uses."""
+class Topic(StrEnum):
+    """What this node publishes. The ROS4HRI topics belong to `HRIListener`."""
 
-    TRACKED_VOICES = "/humans/voices/tracked"
-    TRACKED_PERSONS = "/humans/persons/tracked"
     INTENTS = "/intents"
-
-    @staticmethod
-    def voice_speech(voice_id: str) -> str:
-        return f"/humans/voices/{voice_id}/speech"
-
-    @staticmethod
-    def person_voice(person_id: str) -> str:
-        return f"/humans/persons/{person_id}/voice_id"
 
 
 # %% node
@@ -45,6 +39,11 @@ class IntentNodeConfiguration:
 
     minimum_confidence: float = field(kw_only=True, default=0.0)
     queue_depth: int = field(kw_only=True, default=10)
+    priority: int = field(kw_only=True, default=128)
+    """The priority every published intent carries."""
+
+    humans_period_seconds: float = field(kw_only=True, default=0.05)
+    """How often the ROS4HRI graph is read."""
 
 
 class Speech2PlanNode(Node):
@@ -54,116 +53,102 @@ class Speech2PlanNode(Node):
         self,
         parser: InstructionParser,
         grounder: Grounder,
+        clarifier: Optional[Clarifier] = None,
         configuration: IntentNodeConfiguration = IntentNodeConfiguration(),
+        listener: Optional[HRIListener] = None,
     ):
         super().__init__("speech2plan")
         self.parser = parser
         self.grounder = grounder
+        self.clarifier = clarifier
         self.configuration = configuration
-        self.voice_of_person: Dict[str, str] = {}
-        self.speech_subscriptions: Dict[str, object] = {}
-        self.person_subscriptions: Dict[str, object] = {}
-        self.reliable = QoSProfile(
-            depth=configuration.queue_depth,
-            history=HistoryPolicy.KEEP_LAST,
-            reliability=ReliabilityPolicy.RELIABLE,
-        )
         self.intent_publisher = self.create_publisher(
-            Intent, Topic.INTENTS, self.reliable
+            Intent,
+            str(Topic.INTENTS),
+            QoSProfile(
+                depth=configuration.queue_depth,
+                history=HistoryPolicy.KEEP_LAST,
+                reliability=ReliabilityPolicy.RELIABLE,
+            ),
         )
-        self.create_subscription(
-            IdsList, Topic.TRACKED_VOICES, self.on_tracked_voices, self.reliable
+        self.listener = listener or HRIListener(
+            f"{self.get_name()}_hri_listener", False
         )
-        self.create_subscription(
-            IdsList, Topic.TRACKED_PERSONS, self.on_tracked_persons, self.reliable
+        """Follows the ROS4HRI graph: who is tracked, and whose voice is whose."""
+
+        self.listener.on_voice(self.on_voice)
+        self.create_timer(
+            configuration.humans_period_seconds,
+            self.follow_humans,
+            callback_group=MutuallyExclusiveCallbackGroup(),
         )
 
-    # %% tracked list bookkeeping
+    def follow_humans(self) -> None:
+        """Read what the ROS4HRI graph published, in this node's own thread.
 
-    def on_tracked_voices(self, message: IdsList) -> None:
-        """Subscribe to new voices and drop the ones that went away."""
-        live = set(message.ids)
-        for voice_id in live - self.speech_subscriptions.keys():
-            self.speech_subscriptions[voice_id] = self.create_subscription(
-                LiveSpeech,
-                Topic.voice_speech(voice_id),
-                lambda speech, identifier=voice_id: self.on_speech(identifier, speech),
-                self.reliable,
-            )
-        for voice_id in self.speech_subscriptions.keys() - live:
-            self.destroy_subscription(self.speech_subscriptions.pop(voice_id))
+        A dialogue blocks here while it runs, which is why the listener is not
+        left to spin itself: every callback then belongs to one executor.
+        """
+        self.listener.spin_all(
+            timedelta(seconds=self.configuration.humans_period_seconds)
+        )
 
-    def on_tracked_persons(self, message: IdsList) -> None:
-        """Follow the voice binding of every tracked person."""
-        live = set(message.ids)
-        for person_id in live - self.person_subscriptions.keys():
-            self.person_subscriptions[person_id] = self.create_subscription(
-                String,
-                Topic.person_voice(person_id),
-                lambda voice, identifier=person_id: self.voice_of_person.__setitem__(
-                    identifier, voice.data
-                ),
-                self.reliable,
-            )
-        for person_id in self.person_subscriptions.keys() - live:
-            self.destroy_subscription(self.person_subscriptions.pop(person_id))
-            self.voice_of_person.pop(person_id, None)
+    def on_voice(self, voice: Voice) -> None:
+        """Listen to a voice that has just been tracked."""
+        voice.on_speech(
+            lambda utterance, heard=voice: self.on_speech(heard, utterance)
+        )
 
-    def speaker_of(self, voice_id: str) -> str:
-        """The person bound to `voice_id`, or Intent.UNKNOWN_AGENT."""
-        for person_id, bound_voice in self.voice_of_person.items():
-            if bound_voice == voice_id:
+    def speaker_of(self, voice: Voice) -> str:
+        """The person this voice belongs to, or Intent.UNKNOWN_AGENT."""
+        for person_id, person in self.listener.tracked_persons.items():
+            if person.voice is not None and person.voice.id == voice.id:
                 return person_id
         return Intent.UNKNOWN_AGENT
 
     # %% speech to intent
 
-    def on_speech(self, voice_id: str, message: LiveSpeech) -> None:
-        """Parse a final utterance and publish it as an intent."""
-        if not message.final:
-            return
-        speaker = self.speaker_of(voice_id)
-        instruction = self.parser.parse(message.final, speaker=speaker)
-        instruction.locale = message.locale or None
+    def on_speech(self, voice: Voice, utterance: str) -> None:
+        """Parse a final utterance, clarify it, and publish it as an intent."""
+        speaker = self.speaker_of(voice)
+        instruction = self.parser.parse(utterance, speaker=speaker)
+        instruction.locale = voice.locale or None
         if instruction.confidence < self.configuration.minimum_confidence:
             self.get_logger().info(
-                f"dropping '{message.final}' at confidence {instruction.confidence}"
+                f"dropping '{utterance}' at confidence {instruction.confidence}"
             )
             return
-        outcomes = self.grounder.ground(instruction)
-        for outcome in outcomes:
+        clarification = self.clarify(instruction)
+        if clarification is None:
+            self.get_logger().info(f"'{utterance}' was withdrawn")
+            return
+        for outcome in clarification.outcomes:
             if isinstance(outcome, Ambiguity):
                 names = ", ".join(str(entity.name) for entity in outcome.candidates)
-                self.get_logger().info(f"{outcome.role} is ambiguous between {names}")
-        self.intent_publisher.publish(self.to_message(instruction, outcomes))
-        self.get_logger().info(
-            f"{speaker} said '{message.final}' -> {instruction.intent}"
+                self.get_logger().info(f"{outcome.role} stays ambiguous: {names}")
+        self.intent_publisher.publish(
+            PublishedIntent(
+                instruction=clarification.instruction,
+                outcomes=clarification.outcomes,
+                priority=self.configuration.priority,
+            ).as_message()
         )
+        self.get_logger().info(f"{speaker} said '{utterance}' -> {instruction.intent}")
 
-    def to_message(self, instruction: ParsedInstruction, outcomes) -> Intent:
-        """The instruction as an hri_actions_msgs/Intent, grounded where possible."""
-        resolved = {
-            str(outcome.role): str(outcome.entity.name)
-            for outcome in outcomes
-            if isinstance(outcome, ResolvedRole)
-        }
-        data = {
-            str(binding.role): resolved.get(
-                str(binding.role), binding.constraint.entity_type
+    def clarify(self, instruction: ParsedInstruction) -> Optional[Clarification]:
+        """Run the dialogue, or ground in silence when there is no clarifier."""
+        if self.clarifier is None:
+            return Clarification(
+                instruction=instruction, outcomes=self.grounder.ground(instruction)
             )
-            for binding in instruction.roles
-        }
-        data[str(ThematicRole.INPUT)] = instruction.utterance
-        if instruction.locale:
-            data[str(ThematicRole.LOCALE)] = instruction.locale
-
-        message = Intent()
-        message.intent = str(instruction.intent)
-        message.data = json.dumps(data)
-        message.source = instruction.speaker
-        message.modality = Intent.MODALITY_SPEECH
-        message.confidence = float(instruction.confidence)
-        return message
+        try:
+            clarification = self.clarifier.clarify(instruction)
+        except SkillCallFailed as failure:
+            self.get_logger().warning(f"no dialogue, publishing as parsed: {failure}")
+            return Clarification(
+                instruction=instruction, outcomes=self.grounder.ground(instruction)
+            )
+        return clarification if clarification.confirmed else None
 
 
 # %% entry point
@@ -178,8 +163,12 @@ def load_world(preferred: WorldSource, fallback: WorldSource) -> World:
 
 def main(arguments: Optional[list] = None) -> None:
     """Run the node against a fetched world, falling back to the prototype."""
+    from rclpy.executors import MultiThreadedExecutor
+
+    from speech2plan.parsing.answer_interpreter import AnswerInterpreter
     from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
     from speech2plan.ros.fetched_world import FetchedWorld
+    from speech2plan.ros.skill_client import Ros4HriDialogueSkills
     from speech2plan.vocabulary import Vocabulary
     from speech2plan.world_source import PrototypeWard
 
@@ -188,12 +177,26 @@ def main(arguments: Optional[list] = None) -> None:
     world = load_world(FetchedWorld(node=bootstrap), PrototypeWard())
     bootstrap.destroy_node()
 
+    model = ClaudeCommandLineModel()
+    grounder = Grounder(world=world)
     node = Speech2PlanNode(
         parser=InstructionParser(
-            model=ClaudeCommandLineModel(), vocabulary=Vocabulary.from_world(world)
+            model=model, vocabulary=Vocabulary.from_world(world)
         ),
-        grounder=Grounder(world=world),
+        grounder=grounder,
     )
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    node.clarifier = Clarifier(
+        skills=Ros4HriDialogueSkills(node=node),
+        grounder=grounder,
+        interpreter=AnswerInterpreter(model=model),
+    )
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+    executor.spin()
+    if rclpy.ok():
+        rclpy.shutdown()
+    node.listener = None
+
+
+if __name__ == "__main__":
+    main()

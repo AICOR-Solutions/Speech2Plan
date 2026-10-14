@@ -10,6 +10,7 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     FirstFloor,
     Floor,
     GroundFloor,
+    Human,
     Kitchen,
     LivingRoom,
     Plate,
@@ -43,7 +44,13 @@ class WorldSource(ABC):
 
 @dataclass
 class PrototypeWard(WorldSource):
-    """A two storey building with a kitchen on each floor and a few objects."""
+    """A two storey building with a kitchen on each floor and a few objects.
+
+    The nurse stands on the ground floor, which is what makes "the kitchen"
+    resolve without asking. Two of the three cups are on her floor, in different
+    rooms, so words tell those apart. The two plates share one kitchen, which is
+    the case only perception can settle.
+    """
 
     storey_height: float = field(kw_only=True, default=3.0)
     room_extent: float = field(kw_only=True, default=3.0)
@@ -66,7 +73,10 @@ class PrototypeWard(WorldSource):
             self.add_object(world, Table, "table", 1.0, 0.0)
             self.add_object(world, Cup, "cup", 1.0, 0.0, height=0.8)
             self.add_object(world, Plate, "plate", 1.2, 0.0, height=0.8)
+            self.add_object(world, Plate, "other_plate", 1.4, 0.0, height=0.8)
+            self.add_object(world, Cup, "living_room_cup", 5.5, 0.0, height=0.8)
             self.add_object(world, Cup, "second_cup", 1.0, self.storey_height, height=0.8)
+            self.add_object(world, Human, "nurse", 0.5, 0.0)
         return world
 
     def add_object(

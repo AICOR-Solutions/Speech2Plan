@@ -17,6 +17,7 @@ class QualifierAttribute(StrEnum):
 
     FLOOR = "floor"
     ROOM = "room"
+    NAME = "name"
 
 
 # %% interface
@@ -46,14 +47,19 @@ class PlacementResolver(QualifierResolver):
     world: World = field(kw_only=True)
     storey_tolerance: float = field(kw_only=True, default=0.5)
 
+    def body_of(self, entity: SemanticAnnotation) -> SemanticAnnotation:
+        """The body an entity is placed by, which for a room is its floor."""
+        return entity.floor.root if isinstance(entity, Room) else entity.root
+
     def elevation_of(self, entity: SemanticAnnotation) -> float:
         """The entity's height above the world root."""
         return float(self.pose_of(entity).position.z)
 
     def pose_of(self, entity: SemanticAnnotation):
         """The entity's pose in the world root frame."""
-        body = entity.floor.root if isinstance(entity, Room) else entity.root
-        return self.world.compute_forward_kinematics(self.world.root, body)
+        return self.world.compute_forward_kinematics(
+            self.world.root, self.body_of(entity)
+        )
 
     def storey_of(self, entity: SemanticAnnotation) -> Optional[str]:
         """The highest Level at or below the entity, or None."""
@@ -67,14 +73,12 @@ class PlacementResolver(QualifierResolver):
             return None
         return max(below, key=below.get)
 
-    def room_of(self, entity: SemanticAnnotation) -> Optional[str]:
-        """The name of the nearest room on the entity's storey, or None."""
+    def room_containing(self, entity: SemanticAnnotation) -> Optional[Room]:
+        """The nearest room on the entity's storey, or None."""
         storey = self.storey_of(entity)
         pose = self.pose_of(entity).position
         distances = {
-            str(room.name): (
-                float(self.pose_of(room).position.x) - float(pose.x)
-            ) ** 2
+            room: (float(self.pose_of(room).position.x) - float(pose.x)) ** 2
             + (float(self.pose_of(room).position.y) - float(pose.y)) ** 2
             for room in self.world.get_semantic_annotations_by_type(Room)
             if self.storey_of(room) == storey
@@ -82,6 +86,18 @@ class PlacementResolver(QualifierResolver):
         if not distances:
             return None
         return min(distances, key=distances.get)
+
+    def room_of(self, entity: SemanticAnnotation) -> Optional[str]:
+        """The name of the nearest room on the entity's storey, or None."""
+        room = self.room_containing(entity)
+        return None if room is None else str(room.name)
+
+    def room_named(self, name: str) -> Optional[Room]:
+        """The room of that name, or None."""
+        for room in self.world.get_semantic_annotations_by_type(Room):
+            if str(room.name) == name:
+                return room
+        return None
 
     def satisfies(
         self, entity: SemanticAnnotation, attribute: str, value: str

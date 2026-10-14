@@ -57,3 +57,14 @@ class ApiKeyNotFound(Speech2PlanError):
 
     def error_message(self) -> str:
         return f"{self.env_file} defines no {self.key_name}"
+
+
+@dataclass
+class SkillCallFailed(Speech2PlanError):
+    """A ROS4HRI skill did not run."""
+
+    skill: str = field(kw_only=True)
+    reason: str = field(kw_only=True)
+
+    def error_message(self) -> str:
+        return f"{self.skill}: {self.reason}"

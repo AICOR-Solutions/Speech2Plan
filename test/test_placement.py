@@ -55,6 +55,8 @@ def test_objects_resolve_to_the_room_they_stand_in(ward, resolver):
     } == {
         "cup": "kitchen_ground",
         "plate": "kitchen_ground",
+        "other_plate": "kitchen_ground",
+        "living_room_cup": "living_room",
         "second_cup": "kitchen_first",
     }
 

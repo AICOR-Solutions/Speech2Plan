@@ -5,6 +5,8 @@ from typing import List
 
 import pytest
 
+from semantic_digital_twin.semantic_annotations.semantic_annotations import Agent
+
 from speech2plan.contract import EntityConstraint, Qualifier, ThematicRole
 from speech2plan.grounding import Ambiguity, Grounder, ResolvedRole, Unmatched
 from speech2plan.placement import QualifierResolver
@@ -35,11 +37,13 @@ class Kitchen:
 
 @dataclass
 class MimicWorld:
-    """A world that returns a fixed set of rooms."""
+    """A world of rooms, with nobody in it."""
 
     rooms: List[Kitchen] = field(kw_only=True)
 
     def get_semantic_annotations_by_type(self, semantic_annotation_type) -> List:
+        if semantic_annotation_type is Agent:
+            return []
         return self.rooms
 
 

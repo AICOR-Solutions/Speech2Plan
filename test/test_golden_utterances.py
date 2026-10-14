@@ -4,7 +4,6 @@ import os
 
 import pytest
 
-from speech2plan.grounding import Grounder
 from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
 from speech2plan.parsing.instruction_parser import InstructionParser
 from speech2plan.vocabulary import Vocabulary
