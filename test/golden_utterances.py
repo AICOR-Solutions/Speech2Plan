@@ -10,11 +10,7 @@ from speech2plan.contract import IntentName, ThematicRole
 
 @dataclass
 class GoldenUtterance:
-    """One utterance and the intent it should produce.
-
-    These are the eval set. Add the awkward ones as they come up on the ward,
-    not only the clean ones.
-    """
+    """One utterance and the intent it should produce."""
 
     utterance: str = field(kw_only=True)
     intent: IntentName = field(kw_only=True)
@@ -34,6 +30,27 @@ def golden_utterances() -> List[GoldenUtterance]:
             intent=IntentName.BRING_OBJECT,
             entity_type_per_role={ThematicRole.GOAL: "Kitchen"},
             unfilled_roles=[ThematicRole.OBJECT],
+        ),
+        GoldenUtterance(
+            utterance="Bring the cup to the kitchen on the first floor",
+            intent=IntentName.BRING_OBJECT,
+            entity_type_per_role={
+                ThematicRole.OBJECT: "Cup",
+                ThematicRole.GOAL: "Kitchen",
+            },
+        ),
+        GoldenUtterance(
+            utterance="Pick up the plate",
+            intent=IntentName.GRAB_OBJECT,
+            entity_type_per_role={ThematicRole.OBJECT: "Plate"},
+        ),
+        GoldenUtterance(
+            utterance="Put the cup on the table",
+            intent=IntentName.PLACE_OBJECT,
+            entity_type_per_role={
+                ThematicRole.OBJECT: "Cup",
+                ThematicRole.GOAL: "Table",
+            },
         ),
         GoldenUtterance(
             utterance="Go to the kitchen on the ground floor",

@@ -47,6 +47,27 @@ out  /intents                            hri_actions_msgs/Intent
 Per-voice and per-person subscriptions follow the tracked lists, so ids that
 appear and disappear are handled rather than hardcoded.
 
+## Where the world comes from
+
+Grounding needs a `World`. There are two sources behind one interface:
+
+`PrototypeWard` builds a two storey building in process: a kitchen on each
+floor, plus a living room and a bathroom. The two kitchens are the point, since
+they are what makes "take it to the kitchen" ambiguous. It needs no robot and
+no map, so the parser can be run and tested on a laptop.
+
+`FetchedWorld` asks the graph. Any process holding a world exposes it by running
+semdt's `FetchWorldServer`, which answers a `std_srvs/Trigger` with the whole
+world as a JSON modification list. In a real run that process is the one that
+built the map. The client discovers the service by suffix, so it does not need
+to know which node owns it, and `is_available()` reports whether anything is
+serving one. The node prefers the fetched world and falls back to the prototype,
+which is why it runs either way.
+
+What comes back is a snapshot. For a world that keeps changing, semdt's
+`Synchronizer` subscribes to further modifications. Speech2Plan does not use it,
+because the room list is enough for parsing and rooms do not move.
+
 ## Grounding stays separate
 
 The model names an entity type and never a room. It answers `Kitchen`; if the
@@ -70,12 +91,17 @@ src/speech2plan/
     backend.py                     the LanguageModel interface
     claude_cli.py                  prototype backend, shells out to `claude`
     instruction_parser.py          prompt, call, validation
+  world_source.py                  PrototypeWard, and the WorldSource interface
+  placement.py                     which storey a room is on, which room an object is in
   ros/
     intent_node.py                 the ROS4HRI node
+    fetched_world.py               fetches the live world off the graph
 scripts/parse_once.py              parse one utterance from the shell
 test/
   golden_utterances.py             the eval set
-  test_contract.py, test_grounding.py
+  test_golden_utterances.py        runs the eval set against a model, off by default
+  test_contract.py, test_grounding.py, test_placement.py
+  test_intent_message.py, test_reply_schema.py
 ```
 
 Everything outside `ros/` runs without rclpy and without a robot. The message
@@ -87,15 +113,22 @@ workspace, and the dependency runs one way.
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-PYTHONPATH=src:$PYTHONPATH python3 scripts/parse_once.py "Bring this to the kitchen on the first floor"
+PYTHONPATH=src:$PYTHONPATH python3 scripts/parse_once.py "Bring this to the kitchen"
 ```
 
 ```
-speaker   : __unknown_agent__
 intent    : __intent_bring_object__
-  goal      : EntityConstraint(entity_type='Kitchen', qualifiers=[Qualifier(attribute='floor', value='FirstFloor')], ...)
 unfilled  : ['object']
-confidence: 0.9
+grounding :
+  goal       ambiguous between kitchen_ground, kitchen_first
+```
+
+Naming the floor resolves the goal, and the world holds two cups:
+
+```
+Bring the cup to the kitchen on the first floor
+  object     ambiguous between cup, second_cup
+  goal       resolved to kitchen_first
 ```
 
 The backend calls the locally installed `claude` executable atm. 
@@ -113,14 +146,24 @@ PYTHONPATH=src:$PYTHONPATH python3 -m pytest test -q
 The grounding tests use mimics instead of a loaded world, so the ambiguity cases
 run without a model and without the twin.
 
+`test_golden_utterances.py` calls a model and is skipped unless
+`SPEECH2PLAN_RUN_MODEL_TESTS=1`:
+
+```bash
+SPEECH2PLAN_RUN_MODEL_TESTS=1 PYTHONPATH=src:$PYTHONPATH python3 -m pytest test -q
+```
+
 ## Known gaps
 
-`load_world()` in the node raises until a world is wired in; `scripts/parse_once.py`
-builds a vocabulary by hand meanwhile. The vocabulary covers rooms only, so
-objects are never resolved. Confidence comes from the model and is not
+The vocabulary covers rooms only, so objects are never resolved. Confidence comes from the model and is not
 calibrated. Grounding is not yet in the node's path, so `data` carries entity
 types rather than resolved entity ids. There is no clarification question
 generator, which is where stage two attaches.
 
 `/humans/persons/<id>/voice_id` is assumed to be `std_msgs/String` per REP-155.
 Confirm against the robot before relying on it.
+
+`Room.floor` is the room's floor surface, not the building storey. The storey is
+a `Level`, and the twin has no relation tying one to the other, so
+`StoreyResolver` compares elevations. Replace it once the real map establishes a
+relation; nothing else in grounding changes.

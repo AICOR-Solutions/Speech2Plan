@@ -16,12 +16,12 @@ class Speech2PlanError(Exception):
         return self.error_message()
 
 
-# %% language model errors
+# %% errors
 
 
 @dataclass
 class LanguageModelCallFailed(Speech2PlanError):
-    """The language model backend did not return a usable reply."""
+    """A language model backend returned no usable reply."""
 
     command: str = field(kw_only=True)
     exit_code: int = field(kw_only=True)
@@ -34,12 +34,9 @@ class LanguageModelCallFailed(Speech2PlanError):
         )
 
 
-# %% grounding errors
-
-
 @dataclass
 class SymbolNotInVocabulary(Speech2PlanError):
-    """The model named an entity type that the world does not define."""
+    """The model named an entity type the world does not define."""
 
     entity_type: str = field(kw_only=True)
     known_entity_types: list[str] = field(kw_only=True)
@@ -49,3 +46,14 @@ class SymbolNotInVocabulary(Speech2PlanError):
             f"'{self.entity_type}' is not a known entity type. "
             f"Known: {', '.join(sorted(self.known_entity_types))}"
         )
+
+
+@dataclass
+class ApiKeyNotFound(Speech2PlanError):
+    """The environment file does not define the key."""
+
+    key_name: str = field(kw_only=True)
+    env_file: str = field(kw_only=True)
+
+    def error_message(self) -> str:
+        return f"{self.env_file} defines no {self.key_name}"

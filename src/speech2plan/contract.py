@@ -6,15 +6,11 @@ from typing import List, Optional
 
 from hri_actions_msgs.msg import Intent
 
-# %% vocabulary, taken from the ROS4HRI message
+# %% vocabulary
 
 
 class IntentName(StrEnum):
-    """The intents of hri_actions_msgs/Intent.
-
-    Values come from the message itself so there is one definition. Speech2Plan
-    recognises the subset below; the message defines more.
-    """
+    """The subset of hri_actions_msgs/Intent that Speech2Plan recognises."""
 
     RAW_USER_INPUT = Intent.RAW_USER_INPUT
     MOVE_TO = Intent.MOVE_TO
@@ -25,11 +21,7 @@ class IntentName(StrEnum):
 
 
 class ThematicRole(StrEnum):
-    """Keys of the Intent `data` object.
-
-    `object` is the entity undergoing the intent, `goal` the entity it moves
-    towards, `recipient` the entity that receives the object.
-    """
+    """Keys of the Intent `data` object."""
 
     AGENT = "agent"
     OBJECT = "object"
@@ -44,7 +36,7 @@ class ThematicRole(StrEnum):
 
 @dataclass
 class Qualifier:
-    """One attribute that narrows which entity is meant, such as a floor."""
+    """An attribute and value narrowing which entity is meant."""
 
     attribute: str = field(kw_only=True)
     value: str = field(kw_only=True)
@@ -52,27 +44,28 @@ class Qualifier:
 
 @dataclass
 class EntityConstraint:
-    """A description of an entity, never a single instance.
-
-    The language model emits these. Choosing between the instances that match
-    is the grounder's job, so no room number is ever invented.
-    """
+    """A description of an entity, which the grounder resolves to instances."""
 
     entity_type: str = field(kw_only=True)
-    """Name of a semantic annotation class, validated against the vocabulary."""
-
     qualifiers: List[Qualifier] = field(kw_only=True, default_factory=list)
-
     spoken_form: Optional[str] = field(kw_only=True, default=None)
-    """The words the speaker used, kept for clarification questions."""
+    """The words the speaker used."""
 
 
 @dataclass
 class RoleBinding:
-    """One thematic role and the entity that fills it."""
+    """A thematic role and the entity description filling it."""
 
     role: ThematicRole = field(kw_only=True)
     constraint: EntityConstraint = field(kw_only=True)
+
+
+@dataclass
+class RoleConfidence:
+    """How sure the model is about one role."""
+
+    role: ThematicRole = field(kw_only=True)
+    confidence: float = field(kw_only=True)
 
 
 # %% the parse result
@@ -80,24 +73,31 @@ class RoleBinding:
 
 @dataclass
 class ParsedInstruction:
-    """What one utterance means, in the vocabulary of hri_actions_msgs/Intent.
-
-    A role the speaker left open is absent from `roles` and named in
-    `unfilled_roles`. "Bring this to the kitchen" has a goal and no object
-    until gaze or a question supplies one.
-    """
+    """What one utterance means, in the vocabulary of hri_actions_msgs/Intent."""
 
     utterance: str = field(kw_only=True)
     speaker: str = field(kw_only=True)
-    """ROS4HRI person id, or Intent.UNKNOWN_AGENT when no person is bound."""
+    """ROS4HRI person id, or Intent.UNKNOWN_AGENT."""
 
     intent: IntentName = field(kw_only=True)
     roles: List[RoleBinding] = field(kw_only=True, default_factory=list)
     unfilled_roles: List[ThematicRole] = field(kw_only=True, default_factory=list)
-    confidence: float = field(kw_only=True, default=0.0)
+    intent_confidence: float = field(kw_only=True, default=0.0)
+    confidence_per_role: List[RoleConfidence] = field(
+        kw_only=True, default_factory=list
+    )
     locale: Optional[str] = field(kw_only=True, default=None)
 
+    @property
+    def confidence(self) -> float:
+        """The weakest confidence in the parse."""
+        return min(
+            [self.intent_confidence]
+            + [scored.confidence for scored in self.confidence_per_role]
+        )
+
     def constraint_for(self, role: ThematicRole) -> Optional[EntityConstraint]:
+        """The constraint filling `role`, or None when it is unfilled."""
         for binding in self.roles:
             if binding.role == role:
                 return binding.constraint

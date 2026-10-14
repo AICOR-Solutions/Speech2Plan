@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from hri_actions_msgs.msg import Intent
 
-from speech2plan.contract import IntentName, ThematicRole
+from speech2plan.contract import (
+    IntentName,
+    ParsedInstruction,
+    RoleConfidence,
+    ThematicRole,
+)
 
 # %% the vocabulary is the message's, not a copy
 
@@ -19,3 +24,30 @@ def test_thematic_roles_are_the_documented_keys():
     assert ThematicRole.OBJECT == "object"
     assert ThematicRole.GOAL == "goal"
     assert ThematicRole.RECIPIENT == "recipient"
+
+
+# %% confidence
+
+
+def test_the_overall_confidence_is_the_weakest_part():
+    instruction = ParsedInstruction(
+        utterance="bring the cup to the kitchen",
+        speaker=Intent.UNKNOWN_AGENT,
+        intent=IntentName.BRING_OBJECT,
+        intent_confidence=0.95,
+        confidence_per_role=[
+            RoleConfidence(role=ThematicRole.OBJECT, confidence=0.2),
+            RoleConfidence(role=ThematicRole.GOAL, confidence=0.9),
+        ],
+    )
+    assert instruction.confidence == 0.2
+
+
+def test_confidence_falls_back_to_the_intent_alone():
+    instruction = ParsedInstruction(
+        utterance="wake up",
+        speaker=Intent.UNKNOWN_AGENT,
+        intent=IntentName.MOVE_TO,
+        intent_confidence=0.6,
+    )
+    assert instruction.confidence == 0.6

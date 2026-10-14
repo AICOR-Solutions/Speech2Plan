@@ -7,6 +7,7 @@ import pytest
 
 from speech2plan.contract import EntityConstraint, Qualifier, ThematicRole
 from speech2plan.grounding import Ambiguity, Grounder, ResolvedRole, Unmatched
+from speech2plan.placement import QualifierResolver
 
 # %% mimics
 
@@ -42,6 +43,14 @@ class MimicWorld:
         return self.rooms
 
 
+@dataclass
+class FloorTypeResolver(QualifierResolver):
+    """Resolves a floor qualifier by the mimic room's floor type."""
+
+    def satisfies(self, entity, attribute: str, value: str) -> bool:
+        return attribute == "floor" and type(entity.floor).__name__ == value
+
+
 # %% fixtures
 
 
@@ -59,7 +68,7 @@ def two_kitchens() -> MimicWorld:
 
 
 def test_two_kitchens_are_ambiguous(two_kitchens):
-    grounder = Grounder(world=two_kitchens)
+    grounder = Grounder(world=two_kitchens, qualifier_resolver=FloorTypeResolver())
     outcome = grounder.ground_constraint(
         ThematicRole.GOAL, EntityConstraint(entity_type="Kitchen")
     )
@@ -69,7 +78,7 @@ def test_two_kitchens_are_ambiguous(two_kitchens):
 
 
 def test_floor_qualifier_resolves_the_ambiguity(two_kitchens):
-    grounder = Grounder(world=two_kitchens)
+    grounder = Grounder(world=two_kitchens, qualifier_resolver=FloorTypeResolver())
     outcome = grounder.ground_constraint(
         ThematicRole.GOAL,
         EntityConstraint(
@@ -82,7 +91,7 @@ def test_floor_qualifier_resolves_the_ambiguity(two_kitchens):
 
 
 def test_unknown_room_type_does_not_match(two_kitchens):
-    grounder = Grounder(world=two_kitchens)
+    grounder = Grounder(world=two_kitchens, qualifier_resolver=FloorTypeResolver())
     outcome = grounder.ground_constraint(
         ThematicRole.GOAL, EntityConstraint(entity_type="Bathroom")
     )
