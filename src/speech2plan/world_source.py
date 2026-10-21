@@ -62,11 +62,51 @@ class WorldSource(ABC):
         return True
 
 
+# %% worlds built in process
+
+
+@dataclass
+class BuiltWorld(WorldSource, ABC):
+    """A world built in this process, two storeys high."""
+
+    storey_height: float = field(kw_only=True, default=3.0)
+    footprint: float = field(kw_only=True, default=20.0)
+    """The side length of the square each storey spans."""
+
+    def add_storeys(self, world: World) -> None:
+        """Add a Level region spanning each storey."""
+        for level_type, name, elevation in (
+            (GroundFloor, "ground_floor", 0.0),
+            (FirstFloor, "first_floor", self.storey_height),
+        ):
+            level_type.create_with_new_region_in_world(
+                name=name,
+                world=world,
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    z=elevation + self.storey_height / 2
+                ),
+                scale=Scale(self.footprint, self.footprint, self.storey_height),
+            )
+
+    def add_box(
+        self, world: World, annotation_type, name: str, position: Point3, scale: Scale
+    ):
+        """Add an annotation with a box body of `scale` centred at `position`."""
+        return annotation_type.create_with_new_body_in_world(
+            name=name,
+            world=world,
+            world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                x=float(position.x), y=float(position.y), z=float(position.z)
+            ),
+            scale=scale,
+        )
+
+
 # %% prototyping
 
 
 @dataclass
-class PrototypeWard(WorldSource):
+class PrototypeWard(BuiltWorld):
     """A two storey building with a kitchen on each floor and a few objects.
 
     The nurse stands on the ground floor, which is what makes "the kitchen"
@@ -75,14 +115,12 @@ class PrototypeWard(WorldSource):
     the case words cannot settle.
     """
 
-    storey_height: float = field(kw_only=True, default=3.0)
     room_extent: float = field(kw_only=True, default=3.0)
 
     def load(self) -> World:
         world = World.create_with_root_body("root")
         with world.modify_world():
-            self.add_storey(world, GroundFloor, "ground_floor", 0.0)
-            self.add_storey(world, FirstFloor, "first_floor", self.storey_height)
+            self.add_storeys(world)
             world.add_semantic_annotations(
                 [
                     self.add_room(world, Kitchen, "kitchen_ground", 0.0, 0.0),
@@ -93,46 +131,24 @@ class PrototypeWard(WorldSource):
                     self.add_room(world, Bathroom, "bathroom", 5.0, self.storey_height),
                 ]
             )
-            self.add_object(world, Table, "table", 1.0, 0.0)
-            self.add_object(world, Cup, "cup", 1.0, 0.0, height=0.8)
-            self.add_object(world, Plate, "plate", 1.2, 0.0, height=0.8)
-            self.add_object(world, Plate, "other_plate", 1.4, 0.0, height=0.8)
-            self.add_object(world, Cup, "living_room_cup", 5.5, 0.0, height=0.8)
-            self.add_object(
-                world, Cup, "second_cup", 1.0, self.storey_height, height=0.8
-            )
-            self.add_object(world, Human, "nurse", 0.5, 0.0)
+            first = self.storey_height
+            for annotation_type, name, x, z in (
+                (Table, "table", 1.0, 0.0),
+                (Cup, "cup", 1.0, 0.8),
+                (Plate, "plate", 1.2, 0.8),
+                (Plate, "other_plate", 1.4, 0.8),
+                (Cup, "living_room_cup", 5.5, 0.8),
+                (Cup, "second_cup", 1.0, first + 0.8),
+                (Human, "nurse", 0.5, 0.0),
+            ):
+                self.add_box(
+                    world,
+                    annotation_type,
+                    name,
+                    Point3(x, 1.0, z),
+                    Scale(0.1, 0.1, 0.1),
+                )
         return world
-
-    def add_object(
-        self,
-        world: World,
-        object_type,
-        name: str,
-        offset: float,
-        elevation: float,
-        height: float = 0.0,
-    ):
-        """Add a graspable object standing at `offset` on the given storey."""
-        return object_type.create_with_new_body_in_world(
-            name=name,
-            world=world,
-            world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
-                x=offset, y=1.0, z=elevation + height
-            ),
-            scale=Scale(0.1, 0.1, 0.1),
-        )
-
-    def add_storey(self, world: World, level_type, name: str, elevation: float):
-        """Add a Level spanning the building at `elevation`."""
-        return level_type.create_with_new_region_in_world(
-            name=name,
-            world=world,
-            world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
-                z=elevation + self.storey_height / 2
-            ),
-            scale=Scale(20, 20, self.storey_height),
-        )
 
     def add_room(
         self, world: World, room_type, name: str, offset: float, elevation: float
@@ -168,7 +184,7 @@ class Corner(Enum):
 
 
 @dataclass
-class ElevatorBuilding(WorldSource):
+class ElevatorBuilding(BuiltWorld):
     """The two storey building of the CRAM elevator tests, with named rooms.
 
     Each storey is a `BuildingFloor`, whose four corner rooms carry no Room
@@ -180,7 +196,7 @@ class ElevatorBuilding(WorldSource):
     the ground floor corridor.
     """
 
-    storey_height: float = field(kw_only=True, default=3.0)
+    footprint: float = field(kw_only=True, default=8.0)
     robot_type: Optional[Type[AbstractRobot]] = field(kw_only=True, default=Tiago)
     """The robot standing in the corridor, or None for a building without one."""
 
@@ -202,21 +218,6 @@ class ElevatorBuilding(WorldSource):
         if self.robot_type is not None:
             self.add_robot(world)
         return world
-
-    def add_storeys(self, world: World) -> None:
-        """Add a Level region spanning each storey of the building."""
-        for level_type, name, elevation in (
-            (GroundFloor, "ground_floor", 0.0),
-            (FirstFloor, "first_floor", self.storey_height),
-        ):
-            level_type.create_with_new_region_in_world(
-                name=name,
-                world=world,
-                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    z=elevation + self.storey_height / 2
-                ),
-                scale=Scale(8, 8, self.storey_height),
-            )
 
     def name_rooms(self, world: World) -> None:
         """Annotate the corner rooms of both storeys as typed, named rooms."""
@@ -251,7 +252,7 @@ class ElevatorBuilding(WorldSource):
             ("kitchen_first_table", -1.0, first),
             ("bedroom_first_table", 1.0, first),
         ):
-            self.add_body(
+            self.add_box(
                 world,
                 Table,
                 name,
@@ -259,26 +260,9 @@ class ElevatorBuilding(WorldSource):
                 Scale(0.5, 0.5, 0.75),
             )
         cup = Scale(0.06, 0.06, 0.1)
-        self.add_body(world, Cup, "cup", Point3(-1.0, 3.0, 0.8), cup)
-        self.add_body(
-            world, Cup, "first_floor_cup", Point3(-1.0, 3.0, first + 0.8), cup
-        )
-        self.add_body(
-            world, Human, "nurse", Point3(2.5, 0.0, 0.0), Scale(0.3, 0.3, 0.1)
-        )
-
-    def add_body(
-        self, world: World, annotation_type, name: str, position: Point3, scale: Scale
-    ):
-        """Add an annotation with a box body of `scale` centred at `position`."""
-        return annotation_type.create_with_new_body_in_world(
-            name=name,
-            world=world,
-            world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
-                x=float(position.x), y=float(position.y), z=float(position.z)
-            ),
-            scale=scale,
-        )
+        self.add_box(world, Cup, "cup", Point3(-1.0, 3.0, 0.8), cup)
+        self.add_box(world, Cup, "first_floor_cup", Point3(-1.0, 3.0, first + 0.8), cup)
+        self.add_box(world, Human, "nurse", Point3(2.5, 0.0, 0.0), Scale(0.3, 0.3, 0.1))
 
     def add_elevator(self, world: World) -> None:
         """Add the elevator of the CRAM tests next to the building, opening onto it."""

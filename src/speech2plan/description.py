@@ -152,13 +152,16 @@ class EntityDescriber:
         descriptions = [self.describe(entity) for entity in entities]
         nouns = {description.noun for description in descriptions}
         noun = nouns.pop() if len(nouns) == 1 else "one"
-        options = {}
-        for description in descriptions:
-            spoken = description.option if noun != "one" else description.phrase
-            if spoken is None or spoken in options:
-                return Choice(noun=noun, entity_per_option={}, count=len(entities))
-            options[spoken] = description.entity
-        return Choice(noun=noun, entity_per_option=options, count=len(entities))
+        spoken = [
+            description.option if noun != "one" else description.phrase
+            for description in descriptions
+        ]
+        separable = None not in spoken and len(set(spoken)) == len(spoken)
+        return Choice(
+            noun=noun,
+            entity_per_option=dict(zip(spoken, entities)) if separable else {},
+            count=len(entities),
+        )
 
     def entity_for_phrase(
         self, phrase: str, entities: List[SemanticAnnotation]

@@ -8,6 +8,7 @@ from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Agent,
     Furniture,
+    Handle,
     Room,
 )
 from semantic_digital_twin.world import World
@@ -37,6 +38,11 @@ class ResolvedRole:
         """Whether the speaker's words left this open."""
         return bool(self.alternatives)
 
+    @property
+    def also_matched(self) -> List[SemanticAnnotation]:
+        """What else matched the constraint."""
+        return self.alternatives
+
 
 @dataclass
 class Ambiguity:
@@ -46,6 +52,11 @@ class Ambiguity:
     constraint: EntityConstraint = field(kw_only=True)
     candidates: List[SemanticAnnotation] = field(kw_only=True)
 
+    @property
+    def also_matched(self) -> List[SemanticAnnotation]:
+        """What else matched the constraint."""
+        return self.candidates
+
 
 @dataclass
 class Unmatched:
@@ -53,6 +64,11 @@ class Unmatched:
 
     role: ThematicRole = field(kw_only=True)
     constraint: EntityConstraint = field(kw_only=True)
+
+    @property
+    def also_matched(self) -> List[SemanticAnnotation]:
+        """What else matched the constraint, which is nothing."""
+        return []
 
 
 GroundingOutcome = Union[ResolvedRole, Ambiguity, Unmatched]
@@ -125,6 +141,13 @@ class Grounder:
     searchable_types: Tuple[Type[SemanticAnnotation], ...] = field(
         kw_only=True, default=(Room, HasGraspCandidates, Furniture)
     )
+    """Annotation bases an utterance may refer to."""
+
+    excluded_types: Tuple[Type[SemanticAnnotation], ...] = field(
+        kw_only=True, default=(Handle,)
+    )
+    """Parts of something else, which an utterance never names on their own."""
+
     preference: Optional[CandidatePreference] = field(kw_only=True, default=None)
     """Which candidate to assume when the words leave several."""
 
@@ -146,7 +169,8 @@ class Grounder:
         found = {}
         for searchable in self.searchable_types:
             for entity in self.world.get_semantic_annotations_by_type(searchable):
-                found[str(entity.name)] = entity
+                if not isinstance(entity, self.excluded_types):
+                    found[str(entity.name)] = entity
         return list(found.values())
 
     def entity_named(self, name: str) -> Optional[SemanticAnnotation]:

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import List, Optional
 
 from speech2plan.parsing.backend import CompletionRequest, LanguageModel
-from speech2plan.parsing.instruction_parser import strip_fences
 
 # %% reply shape
 
@@ -30,15 +28,11 @@ class AnswerInterpreter:
         """The offered answer the words mean, or None when none of them does."""
         if not offered:
             return None
-        reply = json.loads(
-            strip_fences(
-                self.model.complete(
-                    CompletionRequest(
-                        system=self.system_prompt(question, offered),
-                        user=spoken,
-                        json_schema=self.reply_schema(offered),
-                    )
-                )
+        reply = self.model.complete_json(
+            CompletionRequest(
+                system=self.system_prompt(question, offered),
+                user=spoken,
+                json_schema=self.reply_schema(offered),
             )
         )
         return reply.get(ReplyKey.CHOICE)

@@ -16,7 +16,7 @@ from semantic_digital_twin.adapters.ros.world_synchronizer import WorldSynchroni
 from speech2plan.contract import ParsedInstruction
 from speech2plan.dialogue import Clarification, Clarifier
 from speech2plan.exceptions import SkillCallFailed
-from speech2plan.grounding import Ambiguity, Grounder
+from speech2plan.grounding import Grounder
 from speech2plan.intent_message import PublishedIntent
 from speech2plan.parsing.instruction_parser import InstructionParser
 from speech2plan.vocabulary import Vocabulary
@@ -137,10 +137,6 @@ class Speech2PlanNode(Node):
         if clarification is None:
             self.get_logger().info(f"'{utterance}' was withdrawn")
             return
-        for outcome in clarification.outcomes:
-            if isinstance(outcome, Ambiguity):
-                names = ", ".join(str(entity.name) for entity in outcome.candidates)
-                self.get_logger().info(f"{outcome.role} stays ambiguous: {names}")
         self.intent_publisher.publish(
             PublishedIntent(
                 instruction=clarification.instruction,

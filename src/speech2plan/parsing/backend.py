@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
@@ -26,3 +27,10 @@ class LanguageModel(ABC):
     @abstractmethod
     def complete(self, request: CompletionRequest) -> str:
         """Return the model's reply as text."""
+
+    def complete_json(self, request: CompletionRequest) -> dict:
+        """The model's reply parsed as JSON, a surrounding code fence ignored."""
+        reply = self.complete(request).strip()
+        if reply.startswith("```"):
+            reply = reply.split("\n", 1)[1].rsplit("```", 1)[0]
+        return json.loads(reply)

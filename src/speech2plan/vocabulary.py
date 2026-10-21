@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Type
+from typing import List
 
-from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
-from semantic_digital_twin.semantic_annotations.semantic_annotations import (
-    Furniture,
-    Handle,
-    Room,
-)
+from semantic_digital_twin.semantic_annotations.semantic_annotations import Room
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
 
 from speech2plan.contract import IntentName, Qualifier
+from speech2plan.grounding import Grounder
 from speech2plan.placement import PlacementResolver, QualifierAttribute
 
 # %% what the world offers
@@ -41,22 +37,12 @@ class Vocabulary:
     intents: List[IntentName] = field(kw_only=True)
     entities: List[EntityOption] = field(kw_only=True)
 
-    searchable_types: Tuple[Type[SemanticAnnotation], ...] = field(
-        kw_only=True, default=(Room, HasGraspCandidates, Furniture)
-    )
-    """Annotation bases an utterance may refer to."""
-
-    excluded_types: Tuple[Type[SemanticAnnotation], ...] = field(
-        kw_only=True, default=(Handle,)
-    )
-    """Parts of something else, which an utterance never names on their own."""
-
     @classmethod
     def from_world(cls, world: World) -> Vocabulary:
         """Read the referable entities out of a world."""
         resolver = PlacementResolver(world=world)
         vocabulary = cls(intents=list(IntentName), entities=[])
-        for entity in vocabulary.referable_entities(world):
+        for entity in Grounder(world=world).searchable_entities():
             vocabulary.entities.append(
                 EntityOption(
                     entity_type=type(entity).__name__,
@@ -65,15 +51,6 @@ class Vocabulary:
                 )
             )
         return vocabulary
-
-    def referable_entities(self, world: World) -> List[SemanticAnnotation]:
-        """Every annotation an utterance may refer to, without duplicates."""
-        found = {}
-        for searchable in self.searchable_types:
-            for entity in world.get_semantic_annotations_by_type(searchable):
-                if not isinstance(entity, self.excluded_types):
-                    found[str(entity.name)] = entity
-        return list(found.values())
 
     @staticmethod
     def qualifiers_for(

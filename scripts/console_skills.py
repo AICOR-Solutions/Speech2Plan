@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import json
 
 import rclpy
+from clarify_once import typed_answer
 from communication_skills.action import Ask, Say
 from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -42,20 +43,11 @@ class ConsoleSkills(Node):
         for key, schema in requested.items():
             print(f"       {key} {json.dumps(schema)}", flush=True)
         print("you  : ", end="", flush=True)
-        spoken = sys.stdin.readline().strip()
+        answers = typed_answer(requested, sys.stdin.readline().strip())
         goal.succeed()
         result = Ask.Result()
-        result.answers = json.dumps(self.answers(requested, spoken))
+        result.answers = json.dumps(answers)
         return result
-
-    def answers(self, requested: dict, spoken: str) -> dict:
-        """What the person said, under the key the question asked for."""
-        if not spoken:
-            return {}
-        key = next(iter(requested))
-        if requested[key].get("type") == "boolean":
-            return {key: spoken.lower() in ("y", "yes", "yeah", "ok", "true")}
-        return {key: spoken}
 
 
 # %% entry point

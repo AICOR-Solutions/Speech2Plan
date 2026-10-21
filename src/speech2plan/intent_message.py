@@ -1,39 +1,31 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import List, Optional
 
 from hri_actions_msgs.msg import Intent
-
-from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
 
 from speech2plan.contract import ParsedInstruction, Qualifier, ThematicRole
 from speech2plan.grounding import (
     Ambiguity,
     GroundingOutcome,
     ResolvedRole,
+    Unmatched,
 )
 
 # %% payload vocabulary
 
 
 class PayloadKey(StrEnum):
-    """Keys of the JSON object that travels in Intent.data."""
+    """Keys of the JSON object in Intent.data that are not thematic roles.
+
+    The keys of each constraint are the fields of SemanticConstraint.
+    """
 
     OTHER_DATA = "other_data"
     CONSTRAINTS = "constraints"
-    ROLE = "role"
-    STATUS = "status"
-    CONFIDENCE = "confidence"
-    ENTITY = "entity"
-    ASSUMED = "assumed"
-    ENTITY_TYPE = "entity_type"
-    QUALIFIERS = "qualifiers"
-    ATTRIBUTE = "attribute"
-    VALUE = "value"
-    CANDIDATES = "candidates"
 
 
 class GroundingStatus(StrEnum):
@@ -47,11 +39,11 @@ class GroundingStatus(StrEnum):
     @classmethod
     def of(cls, outcome: GroundingOutcome) -> GroundingStatus:
         """The status a grounding outcome reports."""
-        if isinstance(outcome, ResolvedRole):
-            return cls.RESOLVED
-        if isinstance(outcome, Ambiguity):
-            return cls.AMBIGUOUS
-        return cls.UNMATCHED
+        return {
+            ResolvedRole: cls.RESOLVED,
+            Ambiguity: cls.AMBIGUOUS,
+            Unmatched: cls.UNMATCHED,
+        }[type(outcome)]
 
 
 # %% one role
@@ -77,22 +69,7 @@ class SemanticConstraint:
 
     def as_dict(self) -> dict:
         """The record as it appears in the payload."""
-        return {
-            str(PayloadKey.ROLE): str(self.role),
-            str(PayloadKey.STATUS): str(self.status),
-            str(PayloadKey.CONFIDENCE): self.confidence,
-            str(PayloadKey.ENTITY): self.entity,
-            str(PayloadKey.ASSUMED): self.assumed,
-            str(PayloadKey.ENTITY_TYPE): self.entity_type,
-            str(PayloadKey.QUALIFIERS): [
-                {
-                    str(PayloadKey.ATTRIBUTE): str(qualifier.attribute),
-                    str(PayloadKey.VALUE): str(qualifier.value),
-                }
-                for qualifier in self.qualifiers
-            ],
-            str(PayloadKey.CANDIDATES): self.candidates,
-        }
+        return asdict(self)
 
 
 # %% the whole intent
@@ -160,26 +137,17 @@ class PublishedIntent:
     def constraint_for(self, outcome: GroundingOutcome) -> SemanticConstraint:
         """One grounding outcome as a record."""
         constraint = self.instruction.constraint_for(outcome.role)
+        resolved = isinstance(outcome, ResolvedRole)
         return SemanticConstraint(
             role=outcome.role,
             status=GroundingStatus.of(outcome),
             confidence=self.confidence_of(outcome.role),
-            entity=(
-                str(outcome.entity.name) if isinstance(outcome, ResolvedRole) else None
-            ),
-            assumed=isinstance(outcome, ResolvedRole) and outcome.assumed,
+            entity=str(outcome.entity.name) if resolved else None,
+            assumed=resolved and outcome.assumed,
             entity_type=constraint.entity_type,
             qualifiers=constraint.qualifiers,
-            candidates=[str(entity.name) for entity in self.also_matched(outcome)],
+            candidates=[str(entity.name) for entity in outcome.also_matched],
         )
-
-    def also_matched(self, outcome: GroundingOutcome) -> List[SemanticAnnotation]:
-        """What else matched the constraint, whether or not one was chosen."""
-        if isinstance(outcome, Ambiguity):
-            return outcome.candidates
-        if isinstance(outcome, ResolvedRole):
-            return outcome.alternatives
-        return []
 
     def confidence_of(self, role: ThematicRole) -> float:
         """What the model scored that role, or zero when it scored nothing."""

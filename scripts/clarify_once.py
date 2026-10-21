@@ -14,7 +14,7 @@ from typing import Dict
 
 from parse_once import describe
 
-from speech2plan.dialogue import CONFIRMED, Clarifier, DialogueSkills, Question
+from speech2plan.dialogue import Clarifier, DialogueSkills, Question
 from speech2plan.grounding import Grounder
 from speech2plan.parsing.answer_interpreter import AnswerInterpreter
 from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
@@ -23,6 +23,16 @@ from speech2plan.vocabulary import Vocabulary
 from speech2plan.world_source import PrototypeWard
 
 # %% the terminal in place of the communication skills
+
+
+def typed_answer(answers_schema: Dict[str, dict], typed: str) -> Dict[str, object]:
+    """What was typed, under the key the question asked for, a yes as true."""
+    if not typed:
+        return {}
+    key = next(iter(answers_schema))
+    if answers_schema[key].get("type") == "boolean":
+        return {key: typed.lower() in ("y", "yes", "yeah", "ok", "true")}
+    return {key: typed}
 
 
 @dataclass
@@ -36,12 +46,7 @@ class ConsoleSkills(DialogueSkills):
         print(f"robot: {question.text}")
         print(f"       schema {json.dumps(question.answers_schema)}")
         print("you  : ", end="", flush=True)
-        answer = sys.stdin.readline().strip()
-        if not answer:
-            return {}
-        if question.answer_key == CONFIRMED:
-            return {CONFIRMED: answer.lower() in ("y", "yes", "yeah", "ok", "true")}
-        return {question.answer_key: answer}
+        return typed_answer(question.answers_schema, sys.stdin.readline().strip())
 
 
 # %% entry point

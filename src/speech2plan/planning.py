@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from coraplex.datastructures.dataclasses import Context
 from coraplex.execution_environment import kinematically_simulated_robot
 from coraplex.plans.factories import sequential
-from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.base import ActionDescription
 from coraplex.robot_plans.actions.composite.transporting import (
     MoveAndPickUpAction,
@@ -67,12 +65,6 @@ class PlanBuilder:
 
     def __post_init__(self):
         self.resolver = PlacementResolver(world=self.context.world)
-
-    def plan_for(self, intent: str, data: str) -> PlanNode:
-        """The plan for an intent, with `data` as the message carries it."""
-        return sequential(
-            actions_of(self.steps_for(intent, json.loads(data))), context=self.context
-        )
 
     def steps_for(self, intent: str, roles: dict) -> List[PlanStep]:
         """The steps carrying out an intent, in order."""
@@ -198,14 +190,17 @@ class PlanBuilder:
         """Where to put something down: the goal, or a surface in the goal room."""
         if not isinstance(goal, Room):
             return goal
-        for surface in self.context.world.get_semantic_annotations_by_type(
-            HasSupportingSurface
-        ):
-            if isinstance(surface, Floor):
-                continue
-            if self.resolver.room_containing(surface) is goal:
-                return surface
-        raise NoSurfaceInRoom(room=str(goal.name))
+        surfaces = [
+            surface
+            for surface in self.context.world.get_semantic_annotations_by_type(
+                HasSupportingSurface
+            )
+            if not isinstance(surface, Floor)
+            and self.resolver.room_containing(surface) is goal
+        ]
+        if not surfaces:
+            raise NoSurfaceInRoom(room=str(goal.name))
+        return surfaces[0]
 
     def placement_on(
         self, surface: SemanticAnnotation, item: SemanticAnnotation

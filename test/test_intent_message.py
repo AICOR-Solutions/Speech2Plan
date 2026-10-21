@@ -80,16 +80,14 @@ def test_a_resolved_constraint_reports_its_entity_and_score(ward):
     )
     assert constraints(message) == [
         {
-            PayloadKey.ROLE: ThematicRole.OBJECT,
-            PayloadKey.STATUS: GroundingStatus.RESOLVED,
-            PayloadKey.CONFIDENCE: 0.8,
-            PayloadKey.ENTITY: "second_cup",
-            PayloadKey.ASSUMED: False,
-            PayloadKey.ENTITY_TYPE: "Cup",
-            PayloadKey.QUALIFIERS: [
-                {PayloadKey.ATTRIBUTE: "name", PayloadKey.VALUE: "second_cup"}
-            ],
-            PayloadKey.CANDIDATES: [],
+            "role": ThematicRole.OBJECT,
+            "status": GroundingStatus.RESOLVED,
+            "confidence": 0.8,
+            "entity": "second_cup",
+            "assumed": False,
+            "entity_type": "Cup",
+            "qualifiers": [{"attribute": "name", "value": "second_cup"}],
+            "candidates": [],
         }
     ]
 
@@ -97,9 +95,9 @@ def test_a_resolved_constraint_reports_its_entity_and_score(ward):
 def test_an_ambiguous_constraint_reports_what_matched(ward):
     message = publish(ward, "take the plate", ThematicRole.OBJECT, entity_type="Plate")
     record = constraints(message)[0]
-    assert record[PayloadKey.STATUS] == GroundingStatus.AMBIGUOUS
-    assert record[PayloadKey.ENTITY] is None
-    assert record[PayloadKey.CANDIDATES] == ["plate", "other_plate"]
+    assert record["status"] == GroundingStatus.AMBIGUOUS
+    assert record["entity"] is None
+    assert record["candidates"] == ["plate", "other_plate"]
 
 
 def test_an_assumed_role_is_published_with_what_it_ruled_out(ward):
@@ -108,9 +106,9 @@ def test_an_assumed_role_is_published_with_what_it_ruled_out(ward):
     )
     record = constraints(message)[0]
     assert json.loads(message.data)[ThematicRole.GOAL] == "kitchen_ground"
-    assert record[PayloadKey.STATUS] == GroundingStatus.RESOLVED
-    assert record[PayloadKey.ASSUMED] is True
-    assert record[PayloadKey.CANDIDATES] == ["kitchen_first"]
+    assert record["status"] == GroundingStatus.RESOLVED
+    assert record["assumed"] is True
+    assert record["candidates"] == ["kitchen_first"]
 
 
 def test_an_unfilled_role_is_reported_without_a_type(ward):
@@ -124,5 +122,5 @@ def test_an_unfilled_role_is_reported_without_a_type(ward):
     message = PublishedIntent(instruction=instruction, outcomes=[]).as_message()
 
     assert ThematicRole.OBJECT not in json.loads(message.data)
-    assert constraints(message)[0][PayloadKey.STATUS] == GroundingStatus.UNFILLED
-    assert constraints(message)[0][PayloadKey.ENTITY_TYPE] is None
+    assert constraints(message)[0]["status"] == GroundingStatus.UNFILLED
+    assert constraints(message)[0]["entity_type"] is None

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import List, Optional
@@ -37,17 +36,6 @@ class ReplyKey(StrEnum):
     VALUE = "value"
 
 
-# %% replies
-
-
-def strip_fences(reply: str) -> str:
-    """`reply` without a surrounding markdown code fence."""
-    stripped = reply.strip()
-    if not stripped.startswith("```"):
-        return stripped
-    return stripped.split("\n", 1)[1].rsplit("```", 1)[0]
-
-
 # %% parser
 
 
@@ -67,8 +55,9 @@ class InstructionParser:
             user=utterance,
             json_schema=self.reply_schema(),
         )
-        reply = json.loads(strip_fences(self.model.complete(request)))
-        return self.build_instruction(utterance, speaker, reply)
+        return self.build_instruction(
+            utterance, speaker, self.model.complete_json(request)
+        )
 
     def system_prompt(self) -> str:
         """The instructions and vocabulary sent with every utterance."""

@@ -322,14 +322,15 @@ class Clarifier:
         """The entity an answer names, among the ones its question offered."""
         choices = self.choices_for(answer.question)
         spoken = str(answer.value)
-        if spoken in choices:
-            return choices[spoken]
-        for entity in choices.values():
-            if str(entity.name) == spoken:
-                return entity
-        in_words = self.describer.entity_for_phrase(spoken, list(choices.values()))
-        if in_words is not None or self.interpreter is None:
-            return in_words
+        by_name = {str(entity.name): entity for entity in choices.values()}
+        matches = (
+            choices.get(spoken),
+            by_name.get(spoken),
+            self.describer.entity_for_phrase(spoken, list(choices.values())),
+        )
+        literal = next((match for match in matches if match is not None), None)
+        if literal is not None or self.interpreter is None:
+            return literal
         return choices.get(
             self.interpreter.choose(answer.question.text, list(choices), spoken)
         )
