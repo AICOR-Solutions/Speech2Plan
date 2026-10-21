@@ -85,8 +85,7 @@ def test_two_kitchens_are_offered_by_their_floors(ward, describer):
     assert choice.noun == "kitchen"
     assert choice.count == 2
     assert {
-        option: str(entity.name)
-        for option, entity in choice.entity_per_option.items()
+        option: str(entity.name) for option, entity in choice.entity_per_option.items()
     } == {
         "the one on the ground floor": "kitchen_ground",
         "the one on the first floor": "kitchen_first",

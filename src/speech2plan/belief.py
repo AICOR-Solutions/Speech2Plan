@@ -74,9 +74,7 @@ class BeliefReport:
             return f"{counted}." if shared is None else f"{counted}, all {shared}."
         if choice.count > self.most_entities:
             return f"{counted}."
-        offered = [
-            option.removeprefix("the ") for option in choice.entity_per_option
-        ]
+        offered = [option.removeprefix("the ") for option in choice.entity_per_option]
         return f"{counted}: {spoken_list(offered)}."
 
     def about_absence(self, outcome: Unmatched) -> str:

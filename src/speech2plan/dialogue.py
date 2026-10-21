@@ -144,9 +144,7 @@ class Clarifier:
         if self.describer is None:
             self.describer = EntityDescriber(world=self.grounder.world)
         if self.belief is None:
-            self.belief = BeliefReport(
-                grounder=self.grounder, describer=self.describer
-            )
+            self.belief = BeliefReport(grounder=self.grounder, describer=self.describer)
 
     def clarify(self, instruction: ParsedInstruction) -> Clarification:
         """Verbalise the parse, settle what is open, and confirm before acting."""
@@ -337,7 +335,10 @@ class Clarifier:
         )
 
     def bind(
-        self, instruction: ParsedInstruction, role: ThematicRole, entity: SemanticAnnotation
+        self,
+        instruction: ParsedInstruction,
+        role: ThematicRole,
+        entity: SemanticAnnotation,
     ) -> ParsedInstruction:
         """The instruction with `role` narrowed to one named entity."""
         spoken = instruction.constraint_for(role)

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -66,7 +64,7 @@ class OpenRouterModel(LanguageModel):
             "model": self.model,
             "messages": [
                 {"role": "system", "content": request.system},
-                {"role": "user", "content": self.user_content(request)},
+                {"role": "user", "content": request.user},
             ],
         }
         if request.json_schema is None:
@@ -81,21 +79,3 @@ class OpenRouterModel(LanguageModel):
         }
         body["provider"] = {"require_parameters": True}
         return body
-
-    def user_content(self, request: CompletionRequest):
-        """The user message, as text or as text followed by image blocks."""
-        if not request.images:
-            return request.user
-        return [{"type": "text", "text": request.user}] + [
-            {
-                "type": "image_url",
-                "image_url": {"url": self.data_url(path)},
-            }
-            for path in request.images
-        ]
-
-    def data_url(self, path: Path) -> str:
-        """`path` as a base64 data URL."""
-        media_type = mimetypes.guess_type(path.name)[0] or "image/png"
-        encoded = base64.standard_b64encode(path.read_bytes()).decode()
-        return f"data:{media_type};base64,{encoded}"

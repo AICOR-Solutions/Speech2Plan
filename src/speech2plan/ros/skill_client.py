@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Dict
 
 from communication_skills.action import Ask, Say
+from hri_actions_msgs.msg import Intent
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
@@ -55,17 +56,21 @@ class Ros4HriDialogueSkills(DialogueSkills):
         meta.priority = self.priority
         return meta
 
+    def addressee(self, person_id: str) -> str:
+        """The skill's person id, empty for whoever is there."""
+        return "" if person_id == Intent.UNKNOWN_AGENT else person_id
+
     def say(self, text: str, person_id: str) -> None:
         goal = Say.Goal()
         goal.meta = self.meta()
-        goal.person_id = person_id
+        goal.person_id = self.addressee(person_id)
         goal.input = text
         self.send(self.say_client, goal, SkillPath.SAY)
 
     def ask(self, question: Question) -> Dict[str, object]:
         goal = Ask.Goal()
         goal.meta = self.meta()
-        goal.person_id = question.person_id
+        goal.person_id = self.addressee(question.person_id)
         goal.question = question.text
         goal.answers_schema = json.dumps(question.answers_schema)
         result = self.send(self.ask_client, goal, SkillPath.ASK)

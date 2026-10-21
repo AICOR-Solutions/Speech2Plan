@@ -27,9 +27,7 @@ class QualifierResolver(ABC):
     """Decides whether an entity satisfies one qualifier."""
 
     @abstractmethod
-    def satisfies(
-        self, entity: SemanticAnnotation, attribute: str, value: str
-    ) -> bool:
+    def satisfies(self, entity: SemanticAnnotation, attribute: str, value: str) -> bool:
         """True when the entity matches `attribute=value`."""
 
 
@@ -61,17 +59,22 @@ class PlacementResolver(QualifierResolver):
             self.world.root, self.body_of(entity)
         )
 
-    def storey_of(self, entity: SemanticAnnotation) -> Optional[str]:
+    def level_of(self, entity: SemanticAnnotation) -> Optional[Level]:
         """The highest Level at or below the entity, or None."""
         ceiling = self.elevation_of(entity) + self.storey_tolerance
-        below = {
-            type(level).__name__: float(level.floor_plane[0].z)
+        below = [
+            level
             for level in self.world.get_semantic_annotations_by_type(Level)
             if float(level.floor_plane[0].z) <= ceiling
-        }
+        ]
         if not below:
             return None
-        return max(below, key=below.get)
+        return max(below, key=lambda level: float(level.floor_plane[0].z))
+
+    def storey_of(self, entity: SemanticAnnotation) -> Optional[str]:
+        """The name of the Level type at or below the entity, or None."""
+        level = self.level_of(entity)
+        return None if level is None else type(level).__name__
 
     def room_containing(self, entity: SemanticAnnotation) -> Optional[Room]:
         """The nearest room on the entity's storey, or None."""
@@ -99,9 +102,7 @@ class PlacementResolver(QualifierResolver):
                 return room
         return None
 
-    def satisfies(
-        self, entity: SemanticAnnotation, attribute: str, value: str
-    ) -> bool:
+    def satisfies(self, entity: SemanticAnnotation, attribute: str, value: str) -> bool:
         if attribute == QualifierAttribute.FLOOR:
             return self.storey_of(entity) == value
         if attribute == QualifierAttribute.ROOM:

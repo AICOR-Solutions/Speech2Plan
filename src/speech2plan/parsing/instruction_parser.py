@@ -138,9 +138,7 @@ class InstructionParser:
                 },
                 str(ReplyKey.ROLES): {
                     "type": "object",
-                    "properties": {
-                        str(role): constraint for role in ThematicRole
-                    },
+                    "properties": {str(role): constraint for role in ThematicRole},
                     "additionalProperties": False,
                 },
                 str(ReplyKey.UNFILLED): {

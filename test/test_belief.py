@@ -90,9 +90,7 @@ def test_an_assumption_names_what_it_ruled_out(report, ward):
 def test_an_absence_reports_what_the_twin_does_hold(report, ward):
     instruction = instruction_for(
         entity_type="Bathroom",
-        qualifiers=[
-            Qualifier(attribute=QualifierAttribute.FLOOR, value="GroundFloor")
-        ],
+        qualifiers=[Qualifier(attribute=QualifierAttribute.FLOOR, value="GroundFloor")],
     )
     assert sentences(report, ward, instruction) == [
         "I know of 1 bathroom, the one on the first floor."

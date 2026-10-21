@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Parse one utterance and clarify it in the terminal, standing in for the robot."""
+
 from __future__ import annotations
 
 import sys
@@ -68,7 +69,9 @@ def main() -> None:
     print("grounding :")
     for outcome in clarification.outcomes:
         print(f"  {describe(outcome)}")
-    print(f"unfilled  : {[str(role) for role in clarification.instruction.unfilled_roles]}")
+    print(
+        f"unfilled  : {[str(role) for role in clarification.instruction.unfilled_roles]}"
+    )
 
 
 if __name__ == "__main__":

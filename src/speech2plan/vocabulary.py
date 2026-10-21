@@ -6,6 +6,7 @@ from typing import List, Tuple, Type
 from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Furniture,
+    Handle,
     Room,
 )
 from semantic_digital_twin.world import World
@@ -45,6 +46,11 @@ class Vocabulary:
     )
     """Annotation bases an utterance may refer to."""
 
+    excluded_types: Tuple[Type[SemanticAnnotation], ...] = field(
+        kw_only=True, default=(Handle,)
+    )
+    """Parts of something else, which an utterance never names on their own."""
+
     @classmethod
     def from_world(cls, world: World) -> Vocabulary:
         """Read the referable entities out of a world."""
@@ -65,7 +71,8 @@ class Vocabulary:
         found = {}
         for searchable in self.searchable_types:
             for entity in world.get_semantic_annotations_by_type(searchable):
-                found[str(entity.name)] = entity
+                if not isinstance(entity, self.excluded_types):
+                    found[str(entity.name)] = entity
         return list(found.values())
 
     @staticmethod

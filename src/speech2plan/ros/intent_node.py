@@ -11,7 +11,7 @@ from hri_actions_msgs.msg import Intent
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from semantic_digital_twin.world import World
+from semantic_digital_twin.adapters.ros.world_synchronizer import WorldSynchronizer
 
 from speech2plan.contract import ParsedInstruction
 from speech2plan.dialogue import Clarification, Clarifier
@@ -19,7 +19,7 @@ from speech2plan.exceptions import SkillCallFailed
 from speech2plan.grounding import Ambiguity, Grounder
 from speech2plan.intent_message import PublishedIntent
 from speech2plan.parsing.instruction_parser import InstructionParser
-from speech2plan.world_source import WorldSource
+from speech2plan.vocabulary import Vocabulary
 
 # %% topic names
 
@@ -62,6 +62,9 @@ class Speech2PlanNode(Node):
         self.grounder = grounder
         self.clarifier = clarifier
         self.configuration = configuration
+        self.world_synchronizer: Optional[WorldSynchronizer] = None
+        """Buffers the changes other processes make to the world, if it is shared."""
+
         self.intent_publisher = self.create_publisher(
             Intent,
             str(Topic.INTENTS),
@@ -95,9 +98,7 @@ class Speech2PlanNode(Node):
 
     def on_voice(self, voice: Voice) -> None:
         """Listen to a voice that has just been tracked."""
-        voice.on_speech(
-            lambda utterance, heard=voice: self.on_speech(heard, utterance)
-        )
+        voice.on_speech(lambda utterance, heard=voice: self.on_speech(heard, utterance))
 
     def speaker_of(self, voice: Voice) -> str:
         """The person this voice belongs to, or Intent.UNKNOWN_AGENT."""
@@ -106,10 +107,24 @@ class Speech2PlanNode(Node):
                 return person_id
         return Intent.UNKNOWN_AGENT
 
+    def follow_world(self) -> None:
+        """Apply the world changes received since the last utterance.
+
+        The vocabulary is rebuilt only when something changed.
+        """
+        if (
+            self.world_synchronizer is None
+            or not self.world_synchronizer.missed_messages
+        ):
+            return
+        self.world_synchronizer.apply_missed_messages()
+        self.parser.vocabulary = Vocabulary.from_world(self.grounder.world)
+
     # %% speech to intent
 
     def on_speech(self, voice: Voice, utterance: str) -> None:
         """Parse a final utterance, clarify it, and publish it as an intent."""
+        self.follow_world()
         speaker = self.speaker_of(voice)
         instruction = self.parser.parse(utterance, speaker=speaker)
         instruction.locale = voice.locale or None
@@ -136,7 +151,10 @@ class Speech2PlanNode(Node):
         self.get_logger().info(f"{speaker} said '{utterance}' -> {instruction.intent}")
 
     def clarify(self, instruction: ParsedInstruction) -> Optional[Clarification]:
-        """Run the dialogue, or ground in silence when there is no clarifier."""
+        """Run the dialogue, or ground in silence when there is no clarifier.
+
+        Returns None when the instruction is withdrawn or cannot be confirmed.
+        """
         if self.clarifier is None:
             return Clarification(
                 instruction=instruction, outcomes=self.grounder.ground(instruction)
@@ -144,21 +162,12 @@ class Speech2PlanNode(Node):
         try:
             clarification = self.clarifier.clarify(instruction)
         except SkillCallFailed as failure:
-            self.get_logger().warning(f"no dialogue, publishing as parsed: {failure}")
-            return Clarification(
-                instruction=instruction, outcomes=self.grounder.ground(instruction)
-            )
+            self.get_logger().error(f"nobody can confirm, withdrawing: {failure}")
+            return None
         return clarification if clarification.confirmed else None
 
 
 # %% entry point
-
-
-def load_world(preferred: WorldSource, fallback: WorldSource) -> World:
-    """Load from `preferred`, or from `fallback` when nothing serves a world."""
-    if preferred.is_available():
-        return preferred.load()
-    return fallback.load()
 
 
 def main(arguments: Optional[list] = None) -> None:
@@ -169,22 +178,25 @@ def main(arguments: Optional[list] = None) -> None:
     from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
     from speech2plan.ros.fetched_world import FetchedWorld
     from speech2plan.ros.skill_client import Ros4HriDialogueSkills
-    from speech2plan.vocabulary import Vocabulary
     from speech2plan.world_source import PrototypeWard
 
     rclpy.init(args=arguments)
     bootstrap = rclpy.create_node("speech2plan_world_fetch")
-    world = load_world(FetchedWorld(node=bootstrap), PrototypeWard())
+    fetched = FetchedWorld(node=bootstrap)
+    is_shared = fetched.is_available()
+    world = fetched.load() if is_shared else PrototypeWard().load()
     bootstrap.destroy_node()
 
     model = ClaudeCommandLineModel()
     grounder = Grounder(world=world)
     node = Speech2PlanNode(
-        parser=InstructionParser(
-            model=model, vocabulary=Vocabulary.from_world(world)
-        ),
+        parser=InstructionParser(model=model, vocabulary=Vocabulary.from_world(world)),
         grounder=grounder,
     )
+    if is_shared:
+        node.world_synchronizer = WorldSynchronizer(
+            _world=world, node=node, defer_incoming_updates=True
+        )
     node.clarifier = Clarifier(
         skills=Ros4HriDialogueSkills(node=node),
         grounder=grounder,

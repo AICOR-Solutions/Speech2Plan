@@ -178,9 +178,9 @@ def test_the_task_is_put_up_for_confirmation(ward):
     skills = FakeDialogueSkills(scripted_answers={"confirmed": True})
     instruction = instruction_for("Table", ThematicRole.GOAL)
 
-    clarification = clarifier_for(
-        ward, skills, confirm_before_acting=True
-    ).clarify(instruction)
+    clarification = clarifier_for(ward, skills, confirm_before_acting=True).clarify(
+        instruction
+    )
 
     assert clarification.confirmed
     assert len(skills.asked) == 1
@@ -238,9 +238,7 @@ def test_verbalising_states_what_was_assumed(ward):
 
 
 def test_the_answer_comes_back_under_the_role(ward):
-    skills = FakeDialogueSkills(
-        scripted_answers={"goal": "the one on the first floor"}
-    )
+    skills = FakeDialogueSkills(scripted_answers={"goal": "the one on the first floor"})
     instruction = instruction_for("Kitchen", ThematicRole.GOAL)
     outcomes = grounder_for(ward).ground(instruction)
 
@@ -252,9 +250,7 @@ def test_the_answer_comes_back_under_the_role(ward):
 
 
 def test_an_offered_option_pins_the_instance(ward):
-    skills = FakeDialogueSkills(
-        scripted_answers={"goal": "the one on the first floor"}
-    )
+    skills = FakeDialogueSkills(scripted_answers={"goal": "the one on the first floor"})
     instruction = instruction_for("Kitchen", ThematicRole.GOAL)
 
     clarification = clarifier_for(ward, skills).clarify(instruction)
@@ -262,9 +258,9 @@ def test_an_offered_option_pins_the_instance(ward):
     assert len(skills.asked) == 1
     assert [type(outcome) for outcome in clarification.outcomes] == [ResolvedRole]
     assert str(clarification.outcomes[0].entity.name) == "kitchen_first"
-    qualifier = clarification.instruction.constraint_for(
-        ThematicRole.GOAL
-    ).qualifiers[0]
+    qualifier = clarification.instruction.constraint_for(ThematicRole.GOAL).qualifiers[
+        0
+    ]
     assert (qualifier.attribute, qualifier.value) == (
         QualifierAttribute.NAME,
         "kitchen_first",
@@ -299,7 +295,9 @@ def test_an_answer_is_read_against_the_options_of_its_own_question(ward):
 
 
 def test_an_answer_in_free_words_also_pins_the_instance(ward):
-    skills = FakeDialogueSkills(scripted_answers={"object": "the cup in the kitchen on the first floor"})
+    skills = FakeDialogueSkills(
+        scripted_answers={"object": "the cup in the kitchen on the first floor"}
+    )
     instruction = instruction_for("Cup", ThematicRole.OBJECT)
 
     clarification = clarifier_for(ward, skills).clarify(instruction)
@@ -342,9 +340,9 @@ def test_a_refused_confirmation_withdraws_the_instruction(ward):
     skills = FakeDialogueSkills(scripted_answers={"confirmed": False})
     instruction = instruction_for("Table", ThematicRole.GOAL)
 
-    clarification = clarifier_for(
-        ward, skills, confirm_before_acting=True
-    ).clarify(instruction)
+    clarification = clarifier_for(ward, skills, confirm_before_acting=True).clarify(
+        instruction
+    )
 
     assert not clarification.confirmed
     assert len(skills.asked) == 1
@@ -354,9 +352,9 @@ def test_an_unanswered_confirmation_withdraws_the_instruction(ward):
     skills = FakeDialogueSkills()
     instruction = instruction_for("Table", ThematicRole.GOAL)
 
-    clarification = clarifier_for(
-        ward, skills, confirm_before_acting=True
-    ).clarify(instruction)
+    clarification = clarifier_for(ward, skills, confirm_before_acting=True).clarify(
+        instruction
+    )
 
     assert not clarification.confirmed
 
@@ -367,9 +365,9 @@ def test_the_confirmation_states_what_the_answers_settled(ward):
     )
     instruction = instruction_for("Kitchen", ThematicRole.GOAL)
 
-    clarification = clarifier_for(
-        ward, skills, confirm_before_acting=True
-    ).clarify(instruction)
+    clarification = clarifier_for(ward, skills, confirm_before_acting=True).clarify(
+        instruction
+    )
 
     assert clarification.confirmed
     assert skills.asked[-1].text == (

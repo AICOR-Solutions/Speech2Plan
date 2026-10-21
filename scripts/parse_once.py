@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Parse one utterance against the prototype world and ground the result."""
+
 from __future__ import annotations
 
 import sys

@@ -103,7 +103,9 @@ def test_an_ambiguous_constraint_reports_what_matched(ward):
 
 
 def test_an_assumed_role_is_published_with_what_it_ruled_out(ward):
-    message = publish(ward, "go to the kitchen", ThematicRole.GOAL, entity_type="Kitchen")
+    message = publish(
+        ward, "go to the kitchen", ThematicRole.GOAL, entity_type="Kitchen"
+    )
     record = constraints(message)[0]
     assert json.loads(message.data)[ThematicRole.GOAL] == "kitchen_ground"
     assert record[PayloadKey.STATUS] == GroundingStatus.RESOLVED

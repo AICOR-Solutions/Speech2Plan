@@ -65,9 +65,7 @@ class CandidatePreference(ABC):
     """Narrows the entities that matched to the ones a speaker likely meant."""
 
     @abstractmethod
-    def narrow(
-        self, candidates: List[SemanticAnnotation]
-    ) -> List[SemanticAnnotation]:
+    def narrow(self, candidates: List[SemanticAnnotation]) -> List[SemanticAnnotation]:
         """The candidates worth considering, out of the ones that matched."""
 
 
@@ -75,9 +73,7 @@ class CandidatePreference(ABC):
 class NoAssumption(CandidatePreference):
     """Assumes nothing, so every entity that matched stays in question."""
 
-    def narrow(
-        self, candidates: List[SemanticAnnotation]
-    ) -> List[SemanticAnnotation]:
+    def narrow(self, candidates: List[SemanticAnnotation]) -> List[SemanticAnnotation]:
         return candidates
 
 
@@ -104,9 +100,7 @@ class AgentStoreyPreference(CandidatePreference):
         }
         return storeys.pop() if len(storeys) == 1 else None
 
-    def narrow(
-        self, candidates: List[SemanticAnnotation]
-    ) -> List[SemanticAnnotation]:
+    def narrow(self, candidates: List[SemanticAnnotation]) -> List[SemanticAnnotation]:
         """The candidates on that storey, or all of them when none is there."""
         storey = self.storey()
         if storey is None:
@@ -186,8 +180,7 @@ class Grounder:
             entity
             for entity in self.entities_of_type(constraint.entity_type)
             if all(
-                self.satisfies(entity, qualifier)
-                for qualifier in constraint.qualifiers
+                self.satisfies(entity, qualifier) for qualifier in constraint.qualifiers
             )
         ]
         if not candidates:

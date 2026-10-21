@@ -6,6 +6,7 @@ plays the ROS4HRI side: one tracked person, one voice, one utterance. With no
 argument the parse is canned, so nothing calls a model; with an utterance the
 real parser runs.
 """
+
 from __future__ import annotations
 
 import sys
@@ -137,7 +138,9 @@ class Probe(Node):
         )
         """Latched, as `hri_person_manager` publishes it."""
 
-        self.speech = self.create_publisher(LiveSpeech, HumansTopic.speech(VOICE_ID), 10)
+        self.speech = self.create_publisher(
+            LiveSpeech, HumansTopic.speech(VOICE_ID), 10
+        )
 
     def on_intent(self, message: Intent) -> None:
         self.intent = message
@@ -189,7 +192,9 @@ class CannedParser:
             roles=[
                 RoleBinding(
                     role=ThematicRole.OBJECT,
-                    constraint=EntityConstraint(entity_type="Cup", spoken_form="the cup"),
+                    constraint=EntityConstraint(
+                        entity_type="Cup", spoken_form="the cup"
+                    ),
                 ),
                 RoleBinding(
                     role=ThematicRole.GOAL,
@@ -225,7 +230,6 @@ def main() -> None:
     for member in (node, server, probe):
         executor.add_node(member)
     threading.Thread(target=executor.spin, daemon=True).start()
-
 
     if not probe.announce():
         print("the node never subscribed to the voice")

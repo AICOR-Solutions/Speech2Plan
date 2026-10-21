@@ -5,6 +5,7 @@ import pytest
 from speech2plan.contract import IntentName, ThematicRole
 from speech2plan.parsing.instruction_parser import InstructionParser, ReplyKey
 from speech2plan.vocabulary import EntityOption, Vocabulary
+from speech2plan.world_source import ElevatorBuilding
 
 # %% fixtures
 
@@ -48,3 +49,9 @@ def test_every_role_is_offered(parser):
     assert set(schema["properties"][str(ReplyKey.ROLES)]["properties"]) == {
         str(role) for role in ThematicRole
     }
+
+
+def test_parts_of_other_things_are_not_offered():
+    vocabulary = Vocabulary.from_world(ElevatorBuilding(robot_type=None).load())
+    assert "Handle" not in vocabulary.entity_types
+    assert "Cup" in vocabulary.entity_types

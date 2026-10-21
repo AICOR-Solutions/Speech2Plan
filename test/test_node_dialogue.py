@@ -6,6 +6,7 @@ from typing import List
 
 import pytest
 import rclpy
+from semantic_digital_twin.semantic_annotations.semantic_annotations import Cup
 
 from speech2plan.contract import (
     EntityConstraint,
@@ -19,6 +20,7 @@ from speech2plan.dialogue import Clarifier, DialogueSkills
 from speech2plan.exceptions import SkillCallFailed
 from speech2plan.grounding import Grounder
 from speech2plan.ros.intent_node import Speech2PlanNode
+from speech2plan.vocabulary import Vocabulary
 from speech2plan.world_source import PrototypeWard
 
 from .fake_hri import FakeListener, FakePerson, FakeVoice
@@ -35,6 +37,19 @@ class FakeParser:
 
     def parse(self, utterance: str, speaker: str = "") -> ParsedInstruction:
         return replace(self.instruction, utterance=utterance, speaker=speaker)
+
+
+@dataclass
+class BufferedWorldChange:
+    """Holds one change another process made, until the node applies it."""
+
+    world: object = field(kw_only=True)
+    missed_messages: List[str] = field(kw_only=True, default_factory=lambda: ["a cup"])
+
+    def apply_missed_messages(self) -> None:
+        with self.world.modify_world():
+            Cup.create_with_new_body_in_world(name="delivered_cup", world=self.world)
+        self.missed_messages.clear()
 
 
 @dataclass
@@ -84,9 +99,7 @@ def ambiguous_object() -> ParsedInstruction:
             )
         ],
         intent_confidence=0.9,
-        confidence_per_role=[
-            RoleConfidence(role=ThematicRole.OBJECT, confidence=0.9)
-        ],
+        confidence_per_role=[RoleConfidence(role=ThematicRole.OBJECT, confidence=0.9)],
     )
 
 
@@ -98,7 +111,8 @@ def doubted_object() -> ParsedInstruction:
         intent=IntentName.BRING_OBJECT,
         roles=[
             RoleBinding(
-                role=ThematicRole.OBJECT, constraint=EntityConstraint(entity_type="Table")
+                role=ThematicRole.OBJECT,
+                constraint=EntityConstraint(entity_type="Table"),
             )
         ],
         intent_confidence=0.2,
@@ -112,9 +126,7 @@ def node_with(ward, skills, instruction=None, listener=None) -> Speech2PlanNode:
         parser=FakeParser(instruction=instruction or ambiguous_object()),
         grounder=grounder,
         clarifier=(
-            None
-            if skills is None
-            else Clarifier(skills=skills, grounder=grounder)
+            None if skills is None else Clarifier(skills=skills, grounder=grounder)
         ),
         listener=listener or FakeListener(),
     )
@@ -210,10 +222,26 @@ def test_a_refusal_publishes_nothing(ros, ward):
     node.destroy_node()
 
 
-def test_a_missing_skill_server_does_not_stop_the_intent(ros, ward):
+def test_a_missing_skill_server_publishes_nothing(ros, ward):
     node = node_with(ward, BrokenDialogueSkills())
 
     utter(node, "bring this to the kitchen")
 
-    assert len(node.intent_publisher.published) == 1
+    assert node.intent_publisher.published == []
+    node.destroy_node()
+
+
+# %% the world changing under the node
+
+
+def test_a_world_change_is_applied_before_the_next_parse(ros):
+    world = PrototypeWard().load()
+    node = node_with(world, None)
+    node.parser.vocabulary = Vocabulary.from_world(world)
+    node.world_synchronizer = BufferedWorldChange(world=world)
+
+    utter(node, "bring the cup to the kitchen")
+
+    names = [entity.name for entity in node.parser.vocabulary.entities]
+    assert "delivered_cup" in names
     node.destroy_node()

@@ -37,10 +37,9 @@ class ClaudeCommandLineModel(LanguageModel):
             "--append-system-prompt",
             request.system,
         ]
-        image_lines = "".join(f"Image: {path}\n" for path in request.images)
         completed = subprocess.run(
             command,
-            input=f"{image_lines}\n{request.user}" if image_lines else request.user,
+            input=request.user,
             capture_output=True,
             text=True,
             timeout=self.timeout_seconds,

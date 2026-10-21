@@ -3,6 +3,7 @@
 
 Run this next to the node to hear what it says and answer what it asks.
 """
+
 from __future__ import annotations
 
 import sys
