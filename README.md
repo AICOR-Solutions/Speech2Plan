@@ -19,9 +19,14 @@ Prototype. The LLM is the `claude` command line.
    unmatched or unfilled. Several candidates on different floors are settled by
    the floor the people and the robot are on, recorded as `assumed`.
 4. The robot says what it understood and what the twin holds about the open
-   parts (`/skill/say`), asks in words a person can answer (`/skill/ask`, never
-   entity ids), and feeds answers back through the LLM and the grounder.
-5. It states the task once more and publishes only if the speaker confirms.
+   parts (`/skill/say`), asks each question once in words a person can answer
+   (never entity ids), and takes the next sentence a tracked voice speaks as the
+   answer, feeding it back through the LLM and the grounder. Fillers such as
+   "huh", which TIAGo's speech recognition makes of noise, are no answer and no
+   instruction. TIAGo's `/skill/ask` is not used: its
+   only chatbot, Rasa, cannot fill an answer schema, so it never returns.
+5. It asks for confirmation, stating the task again only if the answers changed
+   it, and publishes only if the speaker confirms.
    Without reachable skill servers nothing is published.
 
 ## Interface
@@ -29,7 +34,8 @@ Prototype. The LLM is the `claude` command line.
 ```
 in   /humans/voices/tracked, /humans/voices/<id>/speech     via libhri
 in   /humans/persons/tracked, /humans/persons/<id>/voice_id via libhri
-call /skill/say, /skill/ask                                 communication_skills
+call /skill/say                                             communication_skills
+in   /humans/voices/<id>/speech                           answers to its questions
 out  /intents                                               hri_actions_msgs/Intent
 ```
 
@@ -52,7 +58,9 @@ consumer that ignores it still reads a valid intent.
 - `FetchedWorld`: the live world from semdt's `FetchWorldServer`, used when one is
   served, then kept current by a `WorldSynchronizer` whose updates are applied
   before each utterance
-- `PrototypeWard`: a small two storey ward, the fallback
+- `CareWard`: the fallback, the prototype ward plus a patient room, a lounge and
+  everyday objects (books, bottles, fruit, a towel, sofas), several of them duplicated
+- `PrototypeWard`: the small two storey ward the tests use
 - `ElevatorBuilding`: the CRAM elevator test building with named rooms and a TIAGo
 
 ## Planning
@@ -88,6 +96,10 @@ python3 scripts/console_skills.py      # serves /skill/say and /skill/ask on the
 ./scripts/run_node.sh                  # the node
 ros2 topic echo /intents hri_actions_msgs/msg/Intent --full-length
 
+# on TIAGo, PAL's communication_hub publishes on /intents too, so remap ours:
+./scripts/run_node.sh --ros-args -r /intents:=/speech2plan/intents
+ros2 topic echo /speech2plan/intents hri_actions_msgs/msg/Intent --full-length
+
 ros2 topic pub -r 1 /humans/persons/tracked hri_msgs/msg/IdsList "{ids: [nurse_1]}"
 ros2 topic pub -r 1 /humans/voices/tracked hri_msgs/msg/IdsList "{ids: [voice_1]}"
 ros2 topic pub -r 1 --qos-durability transient_local --qos-reliability reliable \
@@ -111,7 +123,6 @@ prefix `CYCLONEDDS_URI=` or append `2>/dev/null`.
 
 - Carrying something to another floor fails in coraplex: its occupancy costmap
   samples standing poses at z=0 (expected failure in `test_planning.py`)
-- `/skill/ask` is unverified on TIAGo
 - Confidence is not calibrated; constraints are only `floor`, `room` and `name`
 - Language only: a deictic "this", or two identical objects in one place, stays ambiguous
 - Nothing submits the task to the plan executive by ROS 2 action yet, and there

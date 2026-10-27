@@ -17,7 +17,11 @@ from speech2plan.contract import (
     ThematicRole,
 )
 from speech2plan.dialogue import Clarifier, DialogueSkills
-from speech2plan.exceptions import SkillCallFailed
+from speech2plan.exceptions import (
+    LanguageModelCallFailed,
+    SkillCallFailed,
+    SymbolNotInVocabulary,
+)
 from speech2plan.grounding import Grounder
 from speech2plan.ros.intent_node import Speech2PlanNode
 from speech2plan.vocabulary import Vocabulary
@@ -37,6 +41,31 @@ class FakeParser:
 
     def parse(self, utterance: str, speaker: str = "") -> ParsedInstruction:
         return replace(self.instruction, utterance=utterance, speaker=speaker)
+
+
+@dataclass
+class UnusableReplyParser:
+    """Fails on the first utterance, the way an unusable model reply does, then parses."""
+
+    failure: Exception = field(kw_only=True)
+    instruction: ParsedInstruction = field(kw_only=True)
+    failed: bool = field(kw_only=True, default=False)
+
+    def parse(self, utterance: str, speaker: str = "") -> ParsedInstruction:
+        if not self.failed:
+            self.failed = True
+            raise self.failure
+        return replace(self.instruction, utterance=utterance, speaker=speaker)
+
+
+@dataclass
+class SkillsThatTookAnAnswer(FakeDialogueSkills):
+    """Skills that have just read one sentence as the answer to a question."""
+
+    answer: str = field(kw_only=True, default="yes")
+
+    def took_as_answer(self, utterance: str) -> bool:
+        return utterance == self.answer
 
 
 @dataclass
@@ -215,10 +244,11 @@ def test_a_refusal_publishes_nothing(ros, ward):
     utter(node, "do the thing")
 
     assert node.intent_publisher.published == []
-    assert skills.asked[-1].text == (
-        "I will bring the table in the kitchen on the ground floor to somewhere. "
-        "Is that correct?"
+    assert skills.said[0].startswith(
+        "I understood: I will bring the table in the kitchen on the ground floor to "
+        "somewhere."
     )
+    assert skills.asked[-1].text == "Is that correct?"
     node.destroy_node()
 
 
@@ -228,6 +258,70 @@ def test_a_missing_skill_server_publishes_nothing(ros, ward):
     utter(node, "bring this to the kitchen")
 
     assert node.intent_publisher.published == []
+    node.destroy_node()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        SymbolNotInVocabulary(entity_type="Person", known_entity_types=["Cup"]),
+        LanguageModelCallFailed(command="claude", exit_code=1, standard_error=""),
+    ],
+    ids=["unknown_entity_type", "no_model_reply"],
+)
+def test_an_unusable_parse_is_dropped_and_the_next_utterance_is_heard(
+    ros, ward, failure
+):
+    skills = FakeDialogueSkills(
+        scripted_answers={
+            "object": "the one in the living room on the ground floor",
+            "confirmed": True,
+        }
+    )
+    node = node_with(ward, skills)
+    node.parser = UnusableReplyParser(failure=failure, instruction=ambiguous_object())
+
+    utter(node, "bring me a book")
+    utter(node, "bring this to the kitchen")
+
+    assert len(node.intent_publisher.published) == 1
+    node.destroy_node()
+
+
+def test_a_sentence_taken_as_an_answer_is_no_new_instruction(ros, ward):
+    skills = SkillsThatTookAnAnswer(
+        scripted_answers={
+            "object": "the one in the living room on the ground floor",
+            "confirmed": True,
+        }
+    )
+    node = node_with(ward, skills)
+
+    utter(node, "yes")
+
+    assert (skills.said, node.intent_publisher.published) == ([], [])
+    node.destroy_node()
+
+
+def test_a_sentence_without_a_task_is_dropped_without_a_word(ros, ward):
+    skills = FakeDialogueSkills(scripted_answers={"confirmed": True})
+    no_task = replace(ambiguous_object(), intent=IntentName.RAW_USER_INPUT, roles=[])
+    node = node_with(ward, skills, instruction=no_task)
+
+    utter(node, "huh")
+
+    assert (skills.said, skills.asked, node.intent_publisher.published) == ([], [], [])
+    node.destroy_node()
+
+
+@pytest.mark.parametrize("filler", ["huh", "hmm", "uh um"])
+def test_a_filler_is_never_parsed(ros, ward, filler):
+    skills = FakeDialogueSkills(scripted_answers={"confirmed": True})
+    node = node_with(ward, skills)
+
+    utter(node, filler)
+
+    assert (skills.said, skills.asked, node.intent_publisher.published) == ([], [], [])
     node.destroy_node()
 
 

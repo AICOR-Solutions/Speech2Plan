@@ -13,9 +13,13 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from semantic_digital_twin.adapters.ros.world_synchronizer import WorldSynchronizer
 
-from speech2plan.contract import ParsedInstruction
-from speech2plan.dialogue import Clarification, Clarifier
-from speech2plan.exceptions import SkillCallFailed
+from speech2plan.contract import IntentName, ParsedInstruction
+from speech2plan.dialogue import Clarification, Clarifier, is_filler
+from speech2plan.exceptions import (
+    LanguageModelCallFailed,
+    SkillCallFailed,
+    SymbolNotInVocabulary,
+)
 from speech2plan.grounding import Grounder
 from speech2plan.intent_message import PublishedIntent
 from speech2plan.parsing.instruction_parser import InstructionParser
@@ -124,9 +128,22 @@ class Speech2PlanNode(Node):
 
     def on_speech(self, voice: Voice, utterance: str) -> None:
         """Parse a final utterance, clarify it, and publish it as an intent."""
+        if is_filler(utterance):
+            return
+        if self.clarifier is not None and self.clarifier.skills.took_as_answer(
+            utterance
+        ):
+            return
         self.follow_world()
         speaker = self.speaker_of(voice)
-        instruction = self.parser.parse(utterance, speaker=speaker)
+        try:
+            instruction = self.parser.parse(utterance, speaker=speaker)
+        except (LanguageModelCallFailed, SymbolNotInVocabulary) as failure:
+            self.get_logger().error(f"dropping '{utterance}': {failure}")
+            return
+        if instruction.intent == IntentName.RAW_USER_INPUT:
+            self.get_logger().info(f"no task in '{utterance}'")
+            return
         instruction.locale = voice.locale or None
         if instruction.confidence < self.configuration.minimum_confidence:
             self.get_logger().info(
@@ -167,20 +184,20 @@ class Speech2PlanNode(Node):
 
 
 def main(arguments: Optional[list] = None) -> None:
-    """Run the node against a fetched world, falling back to the prototype."""
+    """Run the node against a fetched world, falling back to the care ward."""
     from rclpy.executors import MultiThreadedExecutor
 
     from speech2plan.parsing.answer_interpreter import AnswerInterpreter
     from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
     from speech2plan.ros.fetched_world import FetchedWorld
-    from speech2plan.ros.skill_client import Ros4HriDialogueSkills
-    from speech2plan.world_source import PrototypeWard
+    from speech2plan.ros.skill_client import SpokenAnswerSkills
+    from speech2plan.world_source import CareWard
 
     rclpy.init(args=arguments)
     bootstrap = rclpy.create_node("speech2plan_world_fetch")
     fetched = FetchedWorld(node=bootstrap)
     is_shared = fetched.is_available()
-    world = fetched.load() if is_shared else PrototypeWard().load()
+    world = fetched.load() if is_shared else CareWard().load()
     bootstrap.destroy_node()
 
     model = ClaudeCommandLineModel()
@@ -194,7 +211,7 @@ def main(arguments: Optional[list] = None) -> None:
             _world=world, node=node, defer_incoming_updates=True
         )
     node.clarifier = Clarifier(
-        skills=Ros4HriDialogueSkills(node=node),
+        skills=SpokenAnswerSkills(node=node),
         grounder=grounder,
         interpreter=AnswerInterpreter(model=model),
     )

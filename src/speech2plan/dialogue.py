@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
 
@@ -29,6 +30,17 @@ from speech2plan.placement import QualifierAttribute
 
 CONFIRMED = "confirmed"
 """Answer key of a question that only confirms the parse."""
+
+FILLER_WORDS = frozenset(
+    {"huh", "hm", "hmm", "uh", "uhm", "um", "ah", "eh", "er", "mhm"}
+)
+"""Words speech recognition makes of noise and hesitation."""
+
+
+def is_filler(sentence: str) -> bool:
+    """Whether `sentence` holds no word but :data:`FILLER_WORDS`."""
+    return set(re.findall(r"[a-z']+", sentence.lower())) <= FILLER_WORDS
+
 
 # %% how the robot talks about a task
 
@@ -122,6 +134,10 @@ class DialogueSkills(ABC):
     def ask(self, question: Question) -> Dict[str, object]:
         """Put a question and return the answers that came back."""
 
+    def took_as_answer(self, utterance: str) -> bool:
+        """Whether `utterance` already answered a question, and is no instruction."""
+        return False
+
 
 # %% turning grounding outcomes into questions
 
@@ -150,8 +166,10 @@ class Clarifier:
         """Verbalise the parse, settle what is open, and confirm before acting."""
         outcomes = self.grounder.ground(instruction)
         self.verbalise(instruction, outcomes)
+        stated_task = self.describe_task(instruction, outcomes)
+        asked = set()
         for _ in range(self.maximum_rounds):
-            answers = self.resolve(instruction, outcomes)
+            answers = self.resolve(instruction, outcomes, asked=asked)
             if not answers:
                 break
             instruction = self.apply(instruction, answers)
@@ -159,18 +177,28 @@ class Clarifier:
         return Clarification(
             instruction=instruction,
             outcomes=outcomes,
-            confirmed=self.confirmed(instruction, outcomes),
+            confirmed=self.confirmed(instruction, outcomes, stated_task=stated_task),
         )
 
     def confirmed(
-        self, instruction: ParsedInstruction, outcomes: List[GroundingOutcome]
+        self,
+        instruction: ParsedInstruction,
+        outcomes: List[GroundingOutcome],
+        stated_task: str = "",
     ) -> bool:
-        """Whether the speaker agreed to the task as it now stands."""
+        """
+        Whether the speaker agreed to the task as it now stands, which is stated again
+        only if it differs from `stated_task`.
+        """
         if not self.confirm_before_acting:
             return True
+        task = self.describe_task(instruction, outcomes)
         question = Question(
-            text=f"I will {self.describe_task(instruction, outcomes)}. "
-            "Is that correct?",
+            text=(
+                "Is that correct?"
+                if task == stated_task
+                else f"I will {task}. Is that correct?"
+            ),
             answers_schema={CONFIRMED: {"type": "boolean"}},
             person_id=instruction.speaker,
         )
@@ -280,11 +308,22 @@ class Clarifier:
     # %% feeding the answers back
 
     def resolve(
-        self, instruction: ParsedInstruction, outcomes: List[GroundingOutcome]
+        self,
+        instruction: ParsedInstruction,
+        outcomes: List[GroundingOutcome],
+        asked: Optional[Set[str]] = None,
     ) -> List[Answer]:
-        """Ask every outstanding question and keep what came back."""
+        """
+        Ask every outstanding question not in `asked` and keep what came back.
+
+        :param asked: The texts of the questions already put, which this adds to.
+        """
+        asked = set() if asked is None else asked
         answers = []
         for question in self.questions_for(instruction, outcomes):
+            if question.text in asked:
+                continue
+            asked.add(question.text)
             reply = self.skills.ask(question)
             if question.answer_key in reply:
                 answers.append(

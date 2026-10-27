@@ -174,7 +174,7 @@ def test_a_resolved_confident_instruction_asks_nothing(ward):
     assert clarifier_for(ward, skills).questions_for(instruction, outcomes) == []
 
 
-def test_the_task_is_put_up_for_confirmation(ward):
+def test_a_task_just_stated_is_confirmed_without_stating_it_again(ward):
     skills = FakeDialogueSkills(scripted_answers={"confirmed": True})
     instruction = instruction_for("Table", ThematicRole.GOAL)
 
@@ -186,10 +186,7 @@ def test_the_task_is_put_up_for_confirmation(ward):
     assert len(skills.asked) == 1
     assert skills.asked[0].role is None
     assert skills.asked[0].answers_schema == {"confirmed": {"type": "boolean"}}
-    assert skills.asked[0].text == (
-        "I will bring something to the table in the kitchen on the ground floor. "
-        "Is that correct?"
-    )
+    assert skills.asked[0].text == "Is that correct?"
 
 
 # %% verbalisation
@@ -325,13 +322,13 @@ def test_an_answered_unfilled_role_becomes_a_binding(ward):
     assert resolved == {"object": "table", "goal": "kitchen_first"}
 
 
-def test_an_answer_the_world_does_not_know_is_asked_again(ward):
+def test_a_question_is_asked_only_once(ward):
     skills = FakeDialogueSkills(scripted_answers={"goal": "the garage"})
     instruction = instruction_for("Kitchen", ThematicRole.GOAL)
 
     clarification = clarifier_for(ward, skills, maximum_rounds=2).clarify(instruction)
 
-    assert len(skills.asked) == 2
+    assert len(skills.asked) == 1
     assert isinstance(clarification.outcomes[0], Ambiguity)
     assert clarification.confirmed
 

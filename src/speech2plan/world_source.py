@@ -13,8 +13,15 @@ from semantic_digital_twin.predefined_maps.building_floor import BuildingFloor
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.robots.tiago import Tiago
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Apple,
+    Banana,
     Bathroom,
     Bedroom,
+    Book,
+    Bottle,
+    Bowl,
+    Cloth,
+    CoffeeTable,
     Cup,
     Door,
     Elevator,
@@ -24,9 +31,14 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Human,
     Kitchen,
     LivingRoom,
+    Mug,
     Plate,
     Room,
+    SideTable,
+    SoapBottle,
+    Sofa,
     Table,
+    Wardrobe,
 )
 from semantic_digital_twin.specifications.connections import (
     PrismaticConnectionSpecification,
@@ -132,23 +144,26 @@ class PrototypeWard(BuiltWorld):
                 ]
             )
             first = self.storey_height
-            for annotation_type, name, x, z in (
-                (Table, "table", 1.0, 0.0),
-                (Cup, "cup", 1.0, 0.8),
-                (Plate, "plate", 1.2, 0.8),
-                (Plate, "other_plate", 1.4, 0.8),
-                (Cup, "living_room_cup", 5.5, 0.8),
-                (Cup, "second_cup", 1.0, first + 0.8),
-                (Human, "nurse", 0.5, 0.0),
-            ):
-                self.add_box(
-                    world,
-                    annotation_type,
-                    name,
-                    Point3(x, 1.0, z),
-                    Scale(0.1, 0.1, 0.1),
-                )
+            self.add_objects(
+                world,
+                [
+                    (Table, "table", 1.0, 0.0),
+                    (Cup, "cup", 1.0, 0.8),
+                    (Plate, "plate", 1.2, 0.8),
+                    (Plate, "other_plate", 1.4, 0.8),
+                    (Cup, "living_room_cup", 5.5, 0.8),
+                    (Cup, "second_cup", 1.0, first + 0.8),
+                    (Human, "nurse", 0.5, 0.0),
+                ],
+            )
         return world
+
+    def add_objects(self, world: World, placements: list) -> None:
+        """Add a small box per (annotation type, name, x, z) placement."""
+        for annotation_type, name, x, z in placements:
+            self.add_box(
+                world, annotation_type, name, Point3(x, 1.0, z), Scale(0.1, 0.1, 0.1)
+            )
 
     def add_room(
         self, world: World, room_type, name: str, offset: float, elevation: float
@@ -169,6 +184,51 @@ class PrototypeWard(BuiltWorld):
             ),
         )
         return room_type(floor=floor, name=PrefixedName(name))
+
+
+@dataclass
+class CareWard(PrototypeWard):
+    """The prototype ward with a patient room, a lounge and everyday objects.
+
+    Cups, plates, books and bottles each exist more than once, in different rooms
+    or on different floors, so most requests can be settled by words and some only
+    by asking.
+    """
+
+    def load(self) -> World:
+        world = super().load()
+        first = self.storey_height
+        with world.modify_world():
+            world.add_semantic_annotations(
+                [
+                    self.add_room(world, Bedroom, "patient_room", -5.0, 0.0),
+                    self.add_room(world, LivingRoom, "lounge", -5.0, first),
+                ]
+            )
+            self.add_objects(
+                world,
+                [
+                    (Mug, "mug", 1.6, 0.8),
+                    (Bottle, "water_bottle", 1.8, 0.8),
+                    (Apple, "apple", 2.0, 0.8),
+                    (Banana, "banana", 2.2, 0.8),
+                    (Sofa, "sofa", 6.0, 0.0),
+                    (CoffeeTable, "coffee_table", 6.5, 0.0),
+                    (Book, "book", 6.5, 0.5),
+                    (Wardrobe, "wardrobe", -4.0, 0.0),
+                    (SideTable, "bedside_table", -3.0, 0.0),
+                    (Cup, "patient_cup", -3.0, 0.6),
+                    (Book, "patient_book", -2.8, 0.6),
+                    (Bottle, "pill_bottle", -3.2, 0.6),
+                    (Bowl, "bowl", 1.4, first + 0.8),
+                    (Plate, "first_floor_plate", 1.6, first + 0.8),
+                    (SoapBottle, "soap", 5.5, first + 0.8),
+                    (Cloth, "towel", 6.0, first + 0.8),
+                    (Sofa, "lounge_sofa", -4.0, first),
+                    (Book, "lounge_book", -4.0, first + 0.5),
+                ],
+            )
+        return world
 
 
 # %% a building with an elevator
@@ -320,8 +380,7 @@ class ElevatorBuilding(BuiltWorld):
         urdf_reflection.on_error = lambda message: None
         try:
             robot_world = URDFParser.from_file(
-                file_path=self.robot_type.get_ros_file_path(),
-                use_visual_as_collision_backup=self.robot_type.uses_visual_as_collision_backup,
+                file_path=self.robot_type.get_ros_file_path()
             ).parse()
         finally:
             urdf_reflection.on_error = report
