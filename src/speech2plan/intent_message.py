@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from hri_actions_msgs.msg import Intent
 
-from speech2plan.contract import ParsedInstruction, Qualifier, ThematicRole
+from speech2plan.contract import ParsedInstruction, Qualifier, Relation, ThematicRole
 from speech2plan.grounding import (
     Ambiguity,
     GroundingOutcome,
@@ -64,6 +64,13 @@ class SemanticConstraint:
 
     entity_type: Optional[str] = field(kw_only=True, default=None)
     qualifiers: List[Qualifier] = field(kw_only=True, default_factory=list)
+    relations: List[Relation] = field(kw_only=True, default_factory=list)
+    """Where the entity is, relative to other entities. For an unmatched role, this
+    is where the speaker said to find it."""
+
+    spoken_form: Optional[str] = field(kw_only=True, default=None)
+    """The speaker's words, all there is for a kind of thing the world lacks."""
+
     candidates: List[str] = field(kw_only=True, default_factory=list)
     """Everything that matched, while the role is still ambiguous."""
 
@@ -146,6 +153,8 @@ class PublishedIntent:
             assumed=resolved and outcome.assumed,
             entity_type=constraint.entity_type,
             qualifiers=constraint.qualifiers,
+            relations=constraint.relations,
+            spoken_form=constraint.spoken_form,
             candidates=[str(entity.name) for entity in outcome.also_matched],
         )
 

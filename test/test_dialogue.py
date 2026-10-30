@@ -7,15 +7,23 @@ from speech2plan.contract import (
     IntentName,
     ParsedInstruction,
     Qualifier,
+    Relation,
     RoleBinding,
     RoleConfidence,
+    SpatialRelation,
     ThematicRole,
 )
 from speech2plan.dialogue import Clarifier, RoleQuestion
-from speech2plan.grounding import Ambiguity, Grounder, NoAssumption, ResolvedRole
+from speech2plan.grounding import (
+    Ambiguity,
+    Grounder,
+    NoAssumption,
+    ResolvedRole,
+    Unmatched,
+)
 from speech2plan.parsing.answer_interpreter import AnswerInterpreter
 from speech2plan.placement import QualifierAttribute
-from speech2plan.world_source import PrototypeWard
+from speech2plan.world_source import CareWard, PrototypeWard
 
 from .fake_model import FakeModel
 from .fake_skills import FakeDialogueSkills
@@ -118,8 +126,7 @@ def test_namesakes_in_one_room_get_an_open_question(ward):
     assert question.options == {}
     assert question.answers_schema == {"object": {"type": "string"}}
     assert question.text == (
-        "I know of 2 plates and cannot tell them apart in words. "
-        "Which plate do you mean?"
+        "I cannot tell the plates apart in words. Which plate do you mean?"
     )
 
 
@@ -162,8 +169,9 @@ def test_a_missing_entity_is_named_in_words(ward):
     question = clarifier_for(ward, skills).questions_for(instruction, outcomes)[0]
 
     assert question.text == (
-        "I cannot find the bathroom on the ground floor. Where should I look?"
+        "I cannot find the bathroom on the ground floor. Which one do you mean?"
     )
+    assert question.places == []
 
 
 def test_a_resolved_confident_instruction_asks_nothing(ward):
@@ -370,3 +378,157 @@ def test_the_confirmation_states_what_the_answers_settled(ward):
     assert skills.asked[-1].text == (
         "I will bring something to the kitchen on the first floor. Is that correct?"
     )
+
+
+# %% what the twin does not hold
+
+
+@pytest.fixture(scope="module")
+def care_ward():
+    return CareWard().load()
+
+
+def bring(constraint: EntityConstraint) -> ParsedInstruction:
+    """Bring what `constraint` describes to the kitchen."""
+    return ParsedInstruction(
+        utterance="bring it to the kitchen",
+        speaker="person_abc",
+        intent=IntentName.BRING_OBJECT,
+        roles=[
+            RoleBinding(role=ThematicRole.OBJECT, constraint=constraint),
+            RoleBinding(
+                role=ThematicRole.GOAL,
+                constraint=EntityConstraint(
+                    entity_type="Kitchen",
+                    qualifiers=[
+                        Qualifier(
+                            attribute=QualifierAttribute.FLOOR, value="GroundFloor"
+                        )
+                    ],
+                ),
+            ),
+        ],
+        intent_confidence=0.9,
+    )
+
+
+GLOVES = EntityConstraint(entity_type=None, spoken_form="the gloves")
+
+
+def outcome_for(clarification, role: ThematicRole):
+    return next(outcome for outcome in clarification.outcomes if outcome.role == role)
+
+
+def test_a_thing_the_twin_lacks_is_stated_and_its_place_asked(care_ward):
+    skills = FakeDialogueSkills()
+
+    clarifier_for(care_ward, skills).clarify(bring(GLOVES))
+
+    assert skills.said == [
+        "I understood: I will bring the gloves to the kitchen on the ground floor. "
+        "I know of no gloves at all."
+    ]
+    assert [question.text for question in skills.asked] == ["Where are the gloves?"]
+    assert "bedside_table" in skills.asked[0].places
+    assert skills.asked[0].candidates == []
+
+
+def test_the_place_the_speaker_names_travels_with_the_thing(care_ward):
+    skills = FakeDialogueSkills(scripted_answers={"object": "on the side table"})
+
+    clarification = clarifier_for(care_ward, skills).clarify(bring(GLOVES))
+
+    assert len(skills.asked) == 1
+    assert isinstance(outcome_for(clarification, ThematicRole.OBJECT), Unmatched)
+    located = clarification.instruction.constraint_for(ThematicRole.OBJECT)
+    assert located.spoken_form == "the gloves"
+    assert located.relations[0].relation == SpatialRelation.ON
+    assert located.relations[0].reference.qualifiers == [
+        Qualifier(attribute=QualifierAttribute.NAME, value="bedside_table")
+    ]
+
+
+def test_a_located_thing_is_confirmed_where_it_is(care_ward):
+    skills = FakeDialogueSkills(
+        scripted_answers={"object": "on the side table", "confirmed": True}
+    )
+
+    clarifier_for(care_ward, skills, confirm_before_acting=True).clarify(bring(GLOVES))
+
+    assert skills.asked[-1].text == (
+        "I will bring the gloves on the side table in the bedroom on the ground floor "
+        "to the kitchen on the ground floor. Is that correct?"
+    )
+
+
+def test_a_place_that_holds_one_finds_it(care_ward):
+    skills = FakeDialogueSkills(
+        scripted_answers={"object": "the living room on the first floor"}
+    )
+    book_in_the_kitchen = EntityConstraint(
+        entity_type="Book",
+        relations=[
+            Relation(
+                relation=SpatialRelation.IN,
+                reference=EntityConstraint(entity_type="Kitchen"),
+            )
+        ],
+    )
+
+    clarification = clarifier_for(care_ward, skills).clarify(bring(book_in_the_kitchen))
+
+    assert [question.text for question in skills.asked] == ["Where is the book?"]
+    found = outcome_for(clarification, ThematicRole.OBJECT)
+    assert isinstance(found, ResolvedRole)
+    assert str(found.entity.name) == "lounge_book"
+
+
+def test_an_answer_may_name_one_the_twin_holds_elsewhere(care_ward):
+    skills = FakeDialogueSkills(
+        scripted_answers={"object": "the one on the counter top"}
+    )
+    cup_in_the_bathroom = EntityConstraint(
+        entity_type="Cup",
+        relations=[
+            Relation(
+                relation=SpatialRelation.IN,
+                reference=EntityConstraint(entity_type="Bathroom"),
+            )
+        ],
+    )
+
+    clarification = clarifier_for(care_ward, skills).clarify(bring(cup_in_the_bathroom))
+
+    assert str(outcome_for(clarification, ThematicRole.OBJECT).entity.name) == (
+        "counter_cup"
+    )
+
+
+def test_where_a_thing_is_is_asked_once(care_ward):
+    skills = FakeDialogueSkills(scripted_answers={"object": "in the garage"})
+
+    clarification = clarifier_for(care_ward, skills).clarify(bring(GLOVES))
+
+    assert len(skills.asked) == 1
+    assert clarification.instruction.constraint_for(ThematicRole.OBJECT) == GLOVES
+
+
+def test_an_unnamed_thing_is_offered_by_what_it_is(care_ward):
+    skills = FakeDialogueSkills()
+    thing_on_the_coffee_table = EntityConstraint(
+        entity_type="Thing",
+        relations=[
+            Relation(
+                relation=SpatialRelation.ON,
+                reference=EntityConstraint(entity_type="CoffeeTable"),
+            )
+        ],
+    )
+
+    clarifier_for(care_ward, skills).clarify(bring(thing_on_the_coffee_table))
+
+    assert skills.said == [
+        "I understood: I will bring a thing on the coffee table to the kitchen on "
+        "the ground floor. I know of 2 things like that: the book and the banana."
+    ]
+    assert skills.asked[0].text == "Which one do you mean: the book, or the banana?"

@@ -10,8 +10,10 @@ from speech2plan.contract import (
     IntentName,
     ParsedInstruction,
     Qualifier,
+    Relation,
     RoleBinding,
     RoleConfidence,
+    SpatialRelation,
     ThematicRole,
 )
 from speech2plan.grounding import Grounder
@@ -87,6 +89,8 @@ def test_a_resolved_constraint_reports_its_entity_and_score(ward):
             "assumed": False,
             "entity_type": "Cup",
             "qualifiers": [{"attribute": "name", "value": "second_cup"}],
+            "relations": [],
+            "spoken_form": None,
             "candidates": [],
         }
     ]
@@ -124,3 +128,40 @@ def test_an_unfilled_role_is_reported_without_a_type(ward):
     assert ThematicRole.OBJECT not in json.loads(message.data)
     assert constraints(message)[0]["status"] == GroundingStatus.UNFILLED
     assert constraints(message)[0]["entity_type"] is None
+
+
+def test_a_thing_the_twin_lacks_is_published_where_the_speaker_said_it_is(ward):
+    message = publish(
+        ward,
+        "bring the gloves from the table",
+        ThematicRole.OBJECT,
+        entity_type=None,
+        spoken_form="the gloves",
+        relations=[
+            Relation(
+                relation=SpatialRelation.ON,
+                reference=EntityConstraint(
+                    entity_type="Table",
+                    qualifiers=[
+                        Qualifier(attribute=QualifierAttribute.NAME, value="table")
+                    ],
+                ),
+            )
+        ],
+    )
+    record = constraints(message)[0]
+    assert ThematicRole.OBJECT not in json.loads(message.data)
+    assert record["status"] == GroundingStatus.UNMATCHED
+    assert record["entity_type"] is None
+    assert record["spoken_form"] == "the gloves"
+    assert record["relations"] == [
+        {
+            "relation": "on",
+            "reference": {
+                "entity_type": "Table",
+                "qualifiers": [{"attribute": "name", "value": "table"}],
+                "relations": [],
+                "spoken_form": None,
+            },
+        }
+    ]

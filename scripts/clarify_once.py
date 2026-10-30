@@ -12,15 +12,13 @@ import json
 from dataclasses import dataclass
 from typing import Dict
 
-from parse_once import describe
+from parse_once import describe, parser_for, utterance_in
 
 from speech2plan.dialogue import Clarifier, DialogueSkills, Question
 from speech2plan.grounding import Grounder
 from speech2plan.parsing.answer_interpreter import AnswerInterpreter
 from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
-from speech2plan.parsing.instruction_parser import InstructionParser
-from speech2plan.vocabulary import Vocabulary
-from speech2plan.world_source import PrototypeWard
+from speech2plan.world_source import CareWard
 
 # %% the terminal in place of the communication skills
 
@@ -53,12 +51,12 @@ class ConsoleSkills(DialogueSkills):
 
 
 def main() -> None:
-    utterance = " ".join(sys.argv[1:]) or "Bring the cup to the kitchen"
-    world = PrototypeWard().load()
+    utterance = utterance_in(sys.argv[1:], "Bring the cup to the kitchen")
+    world = CareWard().load()
     model = ClaudeCommandLineModel()
-    instruction = InstructionParser(
-        model=model, vocabulary=Vocabulary.from_world(world)
-    ).parse(utterance, speaker="person_console")
+    instruction = parser_for(world, model, sys.argv[1:]).parse(
+        utterance, speaker="person_console"
+    )
 
     print(f"utterance : {instruction.utterance}")
     print(f"intent    : {instruction.intent}")

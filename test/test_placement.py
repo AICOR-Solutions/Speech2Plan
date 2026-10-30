@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
+from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Room
 
 from speech2plan.placement import PlacementResolver, QualifierAttribute
@@ -90,3 +90,21 @@ def test_a_room_qualifier_separates_the_two_cups(ward, resolver):
         if resolver.satisfies(cup, QualifierAttribute.ROOM, "kitchen_first")
     ]
     assert [str(cup.name) for cup in in_first_kitchen] == ["second_cup"]
+
+
+# %% what rests on and lies in what
+
+
+def test_a_snapshot_answers_as_the_live_world_does():
+    from speech2plan.placement import PlacementSnapshot
+    from speech2plan.world_source import CareWard
+
+    care_ward = CareWard().load()
+    live, snapshot = PlacementResolver(world=care_ward), PlacementSnapshot(
+        world=care_ward
+    )
+    for entity in care_ward.get_semantic_annotations_by_type(HasGraspCandidates):
+        for resolver_answer in ("support_of", "container_of", "room_containing"):
+            assert getattr(snapshot, resolver_answer)(entity) is getattr(
+                live, resolver_answer
+            )(entity)

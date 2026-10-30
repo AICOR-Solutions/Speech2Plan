@@ -20,8 +20,10 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Book,
     Bottle,
     Bowl,
+    Cabinet,
     Cloth,
     CoffeeTable,
+    CounterTop,
     Cup,
     Door,
     Elevator,
@@ -113,6 +115,18 @@ class BuiltWorld(WorldSource, ABC):
             scale=scale,
         )
 
+    def add_furniture(self, world: World, placements: list) -> None:
+        """Add furniture per (annotation type, name, x, y, elevation, scale) placement,
+        standing on the floor at `elevation`."""
+        for annotation_type, name, x, y, elevation, scale in placements:
+            self.add_box(
+                world,
+                annotation_type,
+                name,
+                Point3(x, y, elevation + scale.z / 2),
+                scale,
+            )
+
 
 # %% prototyping
 
@@ -123,8 +137,8 @@ class PrototypeWard(BuiltWorld):
 
     The nurse stands on the ground floor, which is what makes "the kitchen"
     resolve without asking. Two of the three cups are on her floor, in different
-    rooms, so words tell those apart. The two plates share one kitchen, which is
-    the case words cannot settle.
+    rooms, so words tell those apart. The two plates share the table of one
+    kitchen, which is the case words cannot settle.
     """
 
     room_extent: float = field(kw_only=True, default=3.0)
@@ -144,10 +158,12 @@ class PrototypeWard(BuiltWorld):
                 ]
             )
             first = self.storey_height
+            self.add_furniture(
+                world, [(Table, "table", 1.2, 1.0, 0.0, Scale(0.6, 0.6, 0.75))]
+            )
             self.add_objects(
                 world,
                 [
-                    (Table, "table", 1.0, 0.0),
                     (Cup, "cup", 1.0, 0.8),
                     (Plate, "plate", 1.2, 0.8),
                     (Plate, "other_plate", 1.4, 0.8),
@@ -159,7 +175,10 @@ class PrototypeWard(BuiltWorld):
         return world
 
     def add_objects(self, world: World, placements: list) -> None:
-        """Add a small box per (annotation type, name, x, z) placement."""
+        """Add a small box per (annotation type, name, x, z) placement.
+
+        A box at z = 0.8 rests on a table 0.75 high, one at 0.6 on a side table.
+        """
         for annotation_type, name, x, z in placements:
             self.add_box(
                 world, annotation_type, name, Point3(x, 1.0, z), Scale(0.1, 0.1, 0.1)
@@ -192,7 +211,9 @@ class CareWard(PrototypeWard):
 
     Cups, plates, books and bottles each exist more than once, in different rooms
     or on different floors, so most requests can be settled by words and some only
-    by asking.
+    by asking. Most things rest on furniture, which tells apart the two cups of the
+    ground floor kitchen: one on the table, one on the counter. The towel lies in
+    the bathroom cabinet. A few things float, as perception leaves them at times.
     """
 
     def load(self) -> World:
@@ -205,26 +226,56 @@ class CareWard(PrototypeWard):
                     self.add_room(world, LivingRoom, "lounge", -5.0, first),
                 ]
             )
+            self.add_furniture(
+                world,
+                [
+                    (
+                        CounterTop,
+                        "kitchen_counter",
+                        2.0,
+                        1.0,
+                        0.0,
+                        Scale(0.8, 0.6, 0.9),
+                    ),
+                    (Sofa, "sofa", 6.0, 2.0, 0.0, Scale(1.6, 0.8, 0.45)),
+                    (CoffeeTable, "coffee_table", 6.5, 1.0, 0.0, Scale(0.8, 0.6, 0.45)),
+                    (Wardrobe, "wardrobe", -4.0, 2.5, 0.0, Scale(1.0, 0.6, 2.0)),
+                    (SideTable, "bedside_table", -3.0, 1.0, 0.0, Scale(0.6, 0.4, 0.55)),
+                    (
+                        Table,
+                        "first_floor_table",
+                        1.4,
+                        1.0,
+                        first,
+                        Scale(1.0, 0.6, 0.75),
+                    ),
+                    (
+                        Cabinet,
+                        "bathroom_cabinet",
+                        6.0,
+                        1.0,
+                        first,
+                        Scale(0.8, 0.5, 1.0),
+                    ),
+                    (Sofa, "lounge_sofa", -4.0, 1.0, first, Scale(1.6, 0.8, 0.45)),
+                ],
+            )
             self.add_objects(
                 world,
                 [
-                    (Mug, "mug", 1.6, 0.8),
-                    (Bottle, "water_bottle", 1.8, 0.8),
-                    (Apple, "apple", 2.0, 0.8),
-                    (Banana, "banana", 2.2, 0.8),
-                    (Sofa, "sofa", 6.0, 0.0),
-                    (CoffeeTable, "coffee_table", 6.5, 0.0),
+                    (Cup, "counter_cup", 1.7, 0.95),
+                    (Mug, "mug", 1.9, 0.95),
+                    (Bottle, "water_bottle", 2.1, 0.95),
+                    (Apple, "apple", 2.25, 0.95),
                     (Book, "book", 6.5, 0.5),
-                    (Wardrobe, "wardrobe", -4.0, 0.0),
-                    (SideTable, "bedside_table", -3.0, 0.0),
+                    (Banana, "banana", 6.7, 0.5),
                     (Cup, "patient_cup", -3.0, 0.6),
                     (Book, "patient_book", -2.8, 0.6),
                     (Bottle, "pill_bottle", -3.2, 0.6),
                     (Bowl, "bowl", 1.4, first + 0.8),
                     (Plate, "first_floor_plate", 1.6, first + 0.8),
-                    (SoapBottle, "soap", 5.5, first + 0.8),
-                    (Cloth, "towel", 6.0, first + 0.8),
-                    (Sofa, "lounge_sofa", -4.0, first),
+                    (SoapBottle, "soap", 5.3, first + 0.8),
+                    (Cloth, "towel", 6.0, first + 0.5),
                     (Book, "lounge_book", -4.0, first + 0.5),
                 ],
             )

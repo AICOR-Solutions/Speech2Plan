@@ -20,7 +20,7 @@ from speech2plan.dialogue import Clarifier, DialogueSkills
 from speech2plan.exceptions import (
     LanguageModelCallFailed,
     SkillCallFailed,
-    SymbolNotInVocabulary,
+    UnusableReply,
 )
 from speech2plan.grounding import Grounder
 from speech2plan.ros.intent_node import Speech2PlanNode
@@ -42,6 +42,9 @@ class FakeParser:
     def parse(self, utterance: str, speaker: str = "") -> ParsedInstruction:
         return replace(self.instruction, utterance=utterance, speaker=speaker)
 
+    def follow(self, world) -> None:
+        self.vocabulary = Vocabulary.from_world(world)
+
 
 @dataclass
 class UnusableReplyParser:
@@ -56,6 +59,30 @@ class UnusableReplyParser:
             self.failed = True
             raise self.failure
         return replace(self.instruction, utterance=utterance, speaker=speaker)
+
+
+@dataclass
+class RecordingParser(FakeParser):
+    """Returns one canned parse, and records every utterance it parsed."""
+
+    parsed: List[str] = field(kw_only=True, default_factory=list)
+
+    def parse(self, utterance: str, speaker: str = "") -> ParsedInstruction:
+        self.parsed.append(utterance)
+        return super().parse(utterance, speaker=speaker)
+
+
+@dataclass
+class SkillsHearingAnInstructionWhileAsking(FakeDialogueSkills):
+    """Skills during whose first question somebody gives the node a new instruction."""
+
+    node: object = field(kw_only=True, default=None)
+    instruction: str = field(kw_only=True, default="bring the plate to the kitchen")
+
+    def ask(self, question):
+        if not self.asked:
+            utter(self.node, self.instruction)
+        return super().ask(question)
 
 
 @dataclass
@@ -264,10 +291,10 @@ def test_a_missing_skill_server_publishes_nothing(ros, ward):
 @pytest.mark.parametrize(
     "failure",
     [
-        SymbolNotInVocabulary(entity_type="Person", known_entity_types=["Cup"]),
+        UnusableReply(utterance="bring me a book", problems=["no type Person"]),
         LanguageModelCallFailed(command="claude", exit_code=1, standard_error=""),
     ],
-    ids=["unknown_entity_type", "no_model_reply"],
+    ids=["unusable_reply", "no_model_reply"],
 )
 def test_an_unusable_parse_is_dropped_and_the_next_utterance_is_heard(
     ros, ward, failure
@@ -325,6 +352,18 @@ def test_a_filler_is_never_parsed(ros, ward, filler):
     node.destroy_node()
 
 
+def test_an_instruction_during_a_dialogue_is_not_parsed(ros, ward):
+    skills = SkillsHearingAnInstructionWhileAsking(scripted_answers={"confirmed": True})
+    node = node_with(ward, skills)
+    node.parser = RecordingParser(instruction=ambiguous_object())
+    skills.node = node
+
+    utter(node, "bring the cup to the kitchen")
+
+    assert node.parser.parsed == ["bring the cup to the kitchen"]
+    node.destroy_node()
+
+
 # %% the world changing under the node
 
 
@@ -334,8 +373,9 @@ def test_a_world_change_is_applied_before_the_next_parse(ros):
     node.parser.vocabulary = Vocabulary.from_world(world)
     node.world_synchronizer = BufferedWorldChange(world=world)
 
+    cups_before = node.parser.vocabulary.count_of("Cup")
+
     utter(node, "bring the cup to the kitchen")
 
-    names = [entity.name for entity in node.parser.vocabulary.entities]
-    assert "delivered_cup" in names
+    assert node.parser.vocabulary.count_of("Cup") == cups_before + 1
     node.destroy_node()

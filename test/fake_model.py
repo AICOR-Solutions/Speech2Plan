@@ -10,11 +10,17 @@ from speech2plan.parsing.backend import CompletionRequest, LanguageModel
 
 @dataclass
 class FakeModel(LanguageModel):
-    """Returns one canned reply and keeps what it was asked."""
+    """Returns canned replies and keeps what it was asked.
 
-    reply: str = field(kw_only=True)
+    The scripted `replies` come first, one per request, then `reply` for good.
+    """
+
+    reply: str = field(kw_only=True, default="")
+    replies: List[str] = field(kw_only=True, default_factory=list)
     requests: List[CompletionRequest] = field(kw_only=True, default_factory=list)
 
     def complete(self, request: CompletionRequest) -> str:
         self.requests.append(request)
+        if self.replies:
+            return self.replies.pop(0)
         return self.reply

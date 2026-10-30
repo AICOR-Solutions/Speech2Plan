@@ -3,12 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from speech2plan.contract import ParsedInstruction
+from speech2plan.contract import UNNAMED_TYPE, ParsedInstruction
 from speech2plan.description import (
     EntityDescriber,
     plural,
     spoken_list,
-    spoken_words,
 )
 from speech2plan.grounding import (
     Ambiguity,
@@ -65,8 +64,12 @@ class BeliefReport:
     def about_candidates(self, outcome: Ambiguity) -> str:
         """Where the entities still in question are."""
         choice = self.describer.choose_between(outcome.candidates)
-        known = len(self.grounder.entities_of_type(outcome.constraint.entity_type))
-        counted = f"I know of {known} {plural(choice.noun, known)}"
+        if outcome.constraint.entity_type == UNNAMED_TYPE:
+            counted = f"I know of {choice.count} things like that"
+            known = choice.count
+        else:
+            known = len(self.grounder.entities_of_type(outcome.constraint.entity_type))
+            counted = f"I know of {known} {plural(choice.noun, known)}"
         if known > choice.count:
             counted = f"{counted}, {choice.count} of them on this floor"
         if not choice.is_separable:
@@ -74,13 +77,16 @@ class BeliefReport:
             return f"{counted}." if shared is None else f"{counted}, all {shared}."
         if choice.count > self.most_entities:
             return f"{counted}."
-        offered = [option.removeprefix("the ") for option in choice.entity_per_option]
+        offered = [
+            option if choice.noun == "one" else option.removeprefix("the ")
+            for option in choice.entity_per_option
+        ]
         return f"{counted}: {spoken_list(offered)}."
 
     def about_absence(self, outcome: Unmatched) -> str:
         """What the twin holds of the kind that matched nothing."""
         known = self.grounder.entities_of_type(outcome.constraint.entity_type)
-        noun = spoken_words(outcome.constraint.entity_type)
+        noun = self.describer.noun_of(outcome.constraint)
         if not known:
             return f"I know of no {noun} at all."
         counted = f"I know of {len(known)} {plural(noun, len(known))}"

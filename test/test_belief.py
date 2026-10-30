@@ -102,3 +102,8 @@ def test_an_absence_reports_what_the_twin_does_hold(report, ward):
 
 def test_a_resolved_role_adds_nothing(report, ward):
     assert sentences(report, ward, instruction_for(entity_type="Table")) == []
+
+
+def test_a_kind_of_thing_the_world_lacks_is_named_in_the_speakers_words(report, ward):
+    instruction = instruction_for(entity_type=None, spoken_form="the gloves")
+    assert sentences(report, ward, instruction) == ["I know of no gloves at all."]

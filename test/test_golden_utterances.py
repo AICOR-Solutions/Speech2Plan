@@ -4,12 +4,14 @@ import os
 
 import pytest
 
+from speech2plan.evaluation import Evaluation, evaluation_cases
+from speech2plan.grounding import Grounder
 from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
 from speech2plan.parsing.instruction_parser import InstructionParser
+from speech2plan.parsing.querying_parser import QueryingInstructionParser
 from speech2plan.vocabulary import Vocabulary
-from speech2plan.world_source import PrototypeWard
-
-from .golden_utterances import golden_utterances
+from speech2plan.world_queries import WorldQueries
+from speech2plan.world_source import CareWard
 
 # %% gate
 
@@ -31,26 +33,34 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def ward():
-    return PrototypeWard().load()
+    return CareWard().load()
 
 
-@pytest.fixture(scope="module")
-def parser(ward):
-    return InstructionParser(
-        model=ClaudeCommandLineModel(), vocabulary=Vocabulary.from_world(ward)
+@pytest.fixture(scope="module", params=["listing", "querying"])
+def evaluation(request, ward):
+    """The parser that reads a listing of the world, and the one that queries it."""
+    model = ClaudeCommandLineModel()
+    vocabulary = Vocabulary.from_world(ward)
+    parser = (
+        InstructionParser(model=model, vocabulary=vocabulary)
+        if request.param == "listing"
+        else QueryingInstructionParser(
+            model=model,
+            vocabulary=vocabulary,
+            queries=WorldQueries(grounder=Grounder(world=ward)),
+        )
     )
+    return Evaluation(parser=parser, grounder=Grounder(world=ward))
 
 
 # %% the eval set
 
 
-@pytest.mark.parametrize(
-    "golden", golden_utterances(), ids=lambda golden: golden.utterance
-)
-def test_the_parse_matches_the_expectation(golden, parser):
-    instruction = parser.parse(golden.utterance)
-    assert instruction.intent == golden.intent
-    assert {
-        binding.role: binding.constraint.entity_type for binding in instruction.roles
-    } == golden.entity_type_per_role
-    assert set(instruction.unfilled_roles) == set(golden.unfilled_roles)
+@pytest.mark.parametrize("case", evaluation_cases(), ids=lambda case: case.utterance)
+def test_every_stage_matches_the_expectation(case, evaluation):
+    if case.needs_query and not isinstance(
+        evaluation.parser, QueryingInstructionParser
+    ):
+        pytest.xfail("only a parser that queries the world can tell what is meant")
+    result = evaluation.score(case)
+    assert result.passed_all, "; ".join(result.failures)

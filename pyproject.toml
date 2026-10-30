@@ -15,7 +15,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0.0,<8.0.0"]
 ros = []
-planning = ["coraplex"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

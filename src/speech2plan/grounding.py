@@ -4,7 +4,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Type, Union
 
-from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
+from krrood.entity_query_language import factories as eql
+from krrood.entity_query_language.predicate import symbolic_function
+from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Agent,
     Furniture,
@@ -14,7 +16,14 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import (
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
 
-from speech2plan.contract import EntityConstraint, ParsedInstruction, ThematicRole
+from speech2plan.contract import (
+    EntityConstraint,
+    ParsedInstruction,
+    Qualifier,
+    UNNAMED_TYPE,
+    Relation,
+    ThematicRole,
+)
 from speech2plan.placement import (
     PlacementResolver,
     QualifierAttribute,
@@ -129,12 +138,38 @@ class AgentStoreyPreference(CandidatePreference):
         return near or candidates
 
 
+# %% the conditions of a query
+
+
+@symbolic_function
+def satisfies(grounder: Grounder, entity: SemanticAnnotation, qualifier: Qualifier):
+    """Whether the entity matches one qualifier, evaluated when the query runs."""
+    return grounder.satisfies(entity, qualifier)
+
+
+@symbolic_function
+def relates(
+    grounder: Grounder,
+    entity: SemanticAnnotation,
+    relation: Relation,
+    reference: SemanticAnnotation,
+):
+    """Whether the entity stands in the relation to the reference."""
+    return grounder.qualifier_resolver.relates(entity, relation.relation, reference)
+
+
 # %% grounder
 
 
 @dataclass
 class Grounder:
-    """Maps entity constraints onto world entities."""
+    """Maps entity constraints onto world entities.
+
+    A constraint becomes an entity query: one variable over the instances of its
+    type, filtered by its qualifiers, and one more variable per relation, ranging
+    over the instances of the reference's type and filtered by the reference's own
+    constraint, so a description may nest as deep as the speaker's words did.
+    """
 
     world: World = field(kw_only=True)
     qualifier_resolver: Optional[QualifierResolver] = field(kw_only=True, default=None)
@@ -180,15 +215,23 @@ class Grounder:
                 return entity
         return None
 
-    def entities_of_type(self, entity_type: str) -> List[SemanticAnnotation]:
-        """Everything of that type the world holds, qualifiers ignored."""
+    def entities_of_type(self, entity_type: Optional[str]) -> List[SemanticAnnotation]:
+        """Everything of that type the world holds, qualifiers ignored. An unnamed
+        thing is any thing that can be moved, which leaves out rooms and furniture."""
+        if entity_type == UNNAMED_TYPE:
+            return [
+                entity
+                for entity in self.searchable_entities()
+                if isinstance(entity, HasGraspCandidates)
+                and not isinstance(entity, (Furniture, Room))
+            ]
         return [
             entity
             for entity in self.searchable_entities()
             if type(entity).__name__ == entity_type
         ]
 
-    def satisfies(self, entity: SemanticAnnotation, qualifier) -> bool:
+    def satisfies(self, entity: SemanticAnnotation, qualifier: Qualifier) -> bool:
         """True when the entity matches one qualifier."""
         if qualifier.attribute == QualifierAttribute.NAME:
             return str(entity.name) == qualifier.value
@@ -196,17 +239,63 @@ class Grounder:
             entity, qualifier.attribute, qualifier.value
         )
 
+    # %% constraints as entity queries
+
+    def matches(self, constraint: EntityConstraint) -> List[SemanticAnnotation]:
+        """Every entity the constraint describes, in the order the world holds them."""
+        described = self.variable_for(constraint)
+        if described is None:
+            return []
+        conditions = self.conditions(described, constraint)
+        if conditions is None:
+            return []
+        query = eql.entity(described)
+        if conditions:
+            query = query.where(*conditions)
+        # A relation joins over its references, so an entity comes once per reference
+        # it relates to. Rooms of one type compare and hash alike, which rules out
+        # distinct(); identity tells them apart.
+        found = {id(match) for match in eql.an(query).evaluate()}
+        return [
+            candidate
+            for candidate in self.entities_of_type(constraint.entity_type)
+            if id(candidate) in found
+        ]
+
+    def variable_for(self, constraint: EntityConstraint):
+        """A query variable over the instances of the constraint's type, or None
+        when the world holds none."""
+        instances = self.entities_of_type(constraint.entity_type)
+        if not instances:
+            return None
+        if constraint.entity_type == UNNAMED_TYPE:
+            return eql.variable(HasGraspCandidates, domain=instances)
+        return eql.variable(type(instances[0]), domain=instances)
+
+    def conditions(self, described, constraint: EntityConstraint) -> Optional[list]:
+        """The conditions on `described` that the constraint states, or None when one
+        of them names a kind of thing the world does not hold."""
+        conditions = [
+            satisfies(self, described, qualifier) for qualifier in constraint.qualifiers
+        ]
+        for relation in constraint.relations:
+            reference = self.variable_for(relation.reference)
+            reference_conditions = (
+                None
+                if reference is None
+                else self.conditions(reference, relation.reference)
+            )
+            if reference_conditions is None:
+                return None
+            conditions.append(relates(self, described, relation, reference))
+            conditions.extend(reference_conditions)
+        return conditions
+
     def ground_constraint(
         self, role: ThematicRole, constraint: EntityConstraint
     ) -> GroundingOutcome:
         """Resolve one constraint against the world."""
-        candidates = [
-            entity
-            for entity in self.entities_of_type(constraint.entity_type)
-            if all(
-                self.satisfies(entity, qualifier) for qualifier in constraint.qualifiers
-            )
-        ]
+        candidates = self.matches(constraint)
         if not candidates:
             return Unmatched(role=role, constraint=constraint)
         if len(candidates) == 1:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import StrEnum
@@ -18,7 +19,7 @@ from speech2plan.dialogue import Clarification, Clarifier, is_filler
 from speech2plan.exceptions import (
     LanguageModelCallFailed,
     SkillCallFailed,
-    SymbolNotInVocabulary,
+    UnusableReply,
 )
 from speech2plan.grounding import Grounder
 from speech2plan.intent_message import PublishedIntent
@@ -68,6 +69,8 @@ class Speech2PlanNode(Node):
         self.configuration = configuration
         self.world_synchronizer: Optional[WorldSynchronizer] = None
         """Buffers the changes other processes make to the world, if it is shared."""
+        self.handling_instruction = threading.Lock()
+        """Held from parsing an instruction until its dialogue ends."""
 
         self.intent_publisher = self.create_publisher(
             Intent,
@@ -114,7 +117,7 @@ class Speech2PlanNode(Node):
     def follow_world(self) -> None:
         """Apply the world changes received since the last utterance.
 
-        The vocabulary is rebuilt only when something changed.
+        The parser reads its vocabulary afresh only when something changed.
         """
         if (
             self.world_synchronizer is None
@@ -122,23 +125,34 @@ class Speech2PlanNode(Node):
         ):
             return
         self.world_synchronizer.apply_missed_messages()
-        self.parser.vocabulary = Vocabulary.from_world(self.grounder.world)
+        self.parser.follow(self.grounder.world)
 
     # %% speech to intent
 
     def on_speech(self, voice: Voice, utterance: str) -> None:
-        """Parse a final utterance, clarify it, and publish it as an intent."""
+        """Handle a final utterance, unless it is a filler, an answer, or said while
+        another instruction is handled."""
         if is_filler(utterance):
             return
         if self.clarifier is not None and self.clarifier.skills.took_as_answer(
             utterance
         ):
             return
+        if not self.handling_instruction.acquire(blocking=False):
+            self.get_logger().info(f"ignoring '{utterance}' during a dialogue")
+            return
+        try:
+            self.handle_instruction(voice, utterance)
+        finally:
+            self.handling_instruction.release()
+
+    def handle_instruction(self, voice: Voice, utterance: str) -> None:
+        """Parse an utterance, clarify it, and publish it as an intent."""
         self.follow_world()
         speaker = self.speaker_of(voice)
         try:
             instruction = self.parser.parse(utterance, speaker=speaker)
-        except (LanguageModelCallFailed, SymbolNotInVocabulary) as failure:
+        except (LanguageModelCallFailed, UnusableReply) as failure:
             self.get_logger().error(f"dropping '{utterance}': {failure}")
             return
         if instruction.intent == IntentName.RAW_USER_INPUT:
@@ -184,17 +198,24 @@ class Speech2PlanNode(Node):
 
 
 def main(arguments: Optional[list] = None) -> None:
-    """Run the node against a fetched world, falling back to the care ward."""
+    """Run the node against a fetched world, falling back to the care ward.
+
+    With `-p query_world:=true` the model is told only the types of the world and
+    queries it for the rest.
+    """
     from rclpy.executors import MultiThreadedExecutor
 
     from speech2plan.parsing.answer_interpreter import AnswerInterpreter
     from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
+    from speech2plan.parsing.querying_parser import QueryingInstructionParser
     from speech2plan.ros.fetched_world import FetchedWorld
     from speech2plan.ros.skill_client import SpokenAnswerSkills
+    from speech2plan.world_queries import WorldQueries
     from speech2plan.world_source import CareWard
 
     rclpy.init(args=arguments)
     bootstrap = rclpy.create_node("speech2plan_world_fetch")
+    query_world = bootstrap.declare_parameter("query_world", False).value
     fetched = FetchedWorld(node=bootstrap)
     is_shared = fetched.is_available()
     world = fetched.load() if is_shared else CareWard().load()
@@ -202,10 +223,17 @@ def main(arguments: Optional[list] = None) -> None:
 
     model = ClaudeCommandLineModel()
     grounder = Grounder(world=world)
-    node = Speech2PlanNode(
-        parser=InstructionParser(model=model, vocabulary=Vocabulary.from_world(world)),
-        grounder=grounder,
+    vocabulary = Vocabulary.from_world(world, describe_instances=not query_world)
+    parser = (
+        QueryingInstructionParser(
+            model=model,
+            vocabulary=vocabulary,
+            queries=WorldQueries(grounder=grounder),
+        )
+        if query_world
+        else InstructionParser(model=model, vocabulary=vocabulary)
     )
+    node = Speech2PlanNode(parser=parser, grounder=grounder)
     if is_shared:
         node.world_synchronizer = WorldSynchronizer(
             _world=world, node=node, defer_incoming_updates=True

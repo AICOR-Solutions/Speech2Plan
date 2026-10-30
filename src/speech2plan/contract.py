@@ -42,14 +42,62 @@ class Qualifier:
     value: str = field(kw_only=True)
 
 
+UNNAMED_TYPE = "Thing"
+"""The type of a thing the speaker leaves unnamed, as in 'the thing on the sofa',
+which any movable thing fits."""
+
+
+class SpatialRelation(StrEnum):
+    """How an entity is placed relative to another one."""
+
+    ON = "on"
+    """Rests on the other, as a cup on a table."""
+
+    IN = "in"
+    """Lies inside the other, a room or a container such as a cabinet."""
+
+
 @dataclass
 class EntityConstraint:
     """A description of an entity, which the grounder resolves to instances."""
 
-    entity_type: str = field(kw_only=True)
+    entity_type: Optional[str] = field(kw_only=True)
+    """The type, or None when the speaker named a kind of thing the world lacks."""
+
     qualifiers: List[Qualifier] = field(kw_only=True, default_factory=list)
+    relations: List[Relation] = field(kw_only=True, default_factory=list)
+    """Where the entity is relative to other entities, each described in turn."""
+
     spoken_form: Optional[str] = field(kw_only=True, default=None)
     """The words the speaker used."""
+
+    def notation(self) -> str:
+        """The constraint in the compact form the model reads, as in
+        `Cup on Table in (Kitchen floor=GroundFloor)`."""
+        return " ".join([self.entity_type or "?", *self.place_notation()]).strip()
+
+    def place_notation(self) -> List[str]:
+        """The qualifiers and relations alone, without the type."""
+        return [
+            f"{relation.relation} {relation.reference.reference_notation()}"
+            for relation in self.relations
+        ] + [
+            f"{qualifier.attribute}={qualifier.value}" for qualifier in self.qualifiers
+        ]
+
+    def reference_notation(self) -> str:
+        """The notation, parenthesised when it is more than a type."""
+        if self.qualifiers or self.relations:
+            return f"({self.notation()})"
+        return self.notation()
+
+
+@dataclass
+class Relation:
+    """An entity placed relative to another entity, which is described in turn."""
+
+    relation: SpatialRelation = field(kw_only=True)
+    reference: EntityConstraint = field(kw_only=True)
 
 
 @dataclass

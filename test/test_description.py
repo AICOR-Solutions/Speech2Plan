@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import pytest
-from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
+from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
 from semantic_digital_twin.semantic_annotations.natural_language import (
     NaturalLanguageDescription,
 )
-from semantic_digital_twin.semantic_annotations.semantic_annotations import Room
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Furniture,
+    Room,
+)
 
-from speech2plan.contract import EntityConstraint, Qualifier
+from speech2plan.contract import (
+    EntityConstraint,
+    Qualifier,
+    Relation,
+    SpatialRelation,
+)
 from speech2plan.description import EntityDescriber, spoken_words
 from speech2plan.placement import QualifierAttribute
-from speech2plan.world_source import PrototypeWard
+from speech2plan.world_source import CareWard, PrototypeWard
 
 # %% fixtures
 
@@ -27,7 +35,7 @@ def describer(ward):
 
 def named(world, name: str):
     """The entity of that name, room or object."""
-    for annotation_type in (Room, HasGraspCandidates):
+    for annotation_type in (Room, HasGraspCandidates, Furniture):
         for entity in world.get_semantic_annotations_by_type(annotation_type):
             if str(entity.name) == name:
                 return entity
@@ -130,3 +138,82 @@ def test_a_constraint_is_described_with_its_qualifiers(describer):
         )
     )
     assert described == "the cup in the kitchen on the first floor"
+
+
+# %% relations and the care ward
+
+
+@pytest.fixture(scope="module")
+def care_ward():
+    return CareWard().load()
+
+
+def test_a_relation_is_described_in_words(describer):
+    described = describer.describe_constraint(
+        EntityConstraint(
+            entity_type="Cup",
+            relations=[
+                Relation(
+                    relation=SpatialRelation.ON,
+                    reference=EntityConstraint(entity_type="Table"),
+                )
+            ],
+        )
+    )
+    assert described == "the cup on the table"
+
+
+def test_a_reference_pinned_by_name_is_described_as_that_entity(care_ward):
+    described = EntityDescriber(world=care_ward).describe_constraint(
+        EntityConstraint(
+            entity_type="Cup",
+            relations=[
+                Relation(
+                    relation=SpatialRelation.ON,
+                    reference=EntityConstraint(
+                        entity_type="SideTable",
+                        qualifiers=[
+                            Qualifier(
+                                attribute=QualifierAttribute.NAME,
+                                value="bedside_table",
+                            )
+                        ],
+                    ),
+                )
+            ],
+        )
+    )
+    assert described == ("the cup on the side table in the bedroom on the ground floor")
+
+
+def test_a_thing_of_no_known_type_is_described_in_the_speakers_words(describer):
+    assert (
+        describer.describe_constraint(
+            EntityConstraint(entity_type=None, spoken_form="the gloves")
+        )
+        == "the gloves"
+    )
+
+
+def test_what_a_thing_stands_on_sets_apart_namesakes_in_one_room(care_ward):
+    cups = [named(care_ward, "cup"), named(care_ward, "counter_cup")]
+    choice = EntityDescriber(world=care_ward).choose_between(cups)
+    assert {
+        option: str(entity.name) for option, entity in choice.entity_per_option.items()
+    } == {
+        "the one on the table": "cup",
+        "the one on the counter top": "counter_cup",
+    }
+
+
+def test_what_a_thing_lies_in_is_a_feature(care_ward):
+    describer = EntityDescriber(world=care_ward)
+    assert describer.place_feature(named(care_ward, "towel")) == "in the cabinet"
+
+
+def test_an_answer_saying_where_finds_the_entity(care_ward):
+    cups = [named(care_ward, "cup"), named(care_ward, "counter_cup")]
+    found = EntityDescriber(world=care_ward).entity_for_phrase(
+        "on the counter top", cups
+    )
+    assert str(found.name) == "counter_cup"

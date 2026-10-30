@@ -30,7 +30,12 @@ class LanguageModel(ABC):
 
     def complete_json(self, request: CompletionRequest) -> dict:
         """The model's reply parsed as JSON, a surrounding code fence ignored."""
-        reply = self.complete(request).strip()
-        if reply.startswith("```"):
-            reply = reply.split("\n", 1)[1].rsplit("```", 1)[0]
-        return json.loads(reply)
+        return parse_json(self.complete(request))
+
+
+def parse_json(reply: str) -> dict:
+    """A reply parsed as JSON, a surrounding code fence ignored."""
+    reply = reply.strip()
+    if reply.startswith("```"):
+        reply = reply.split("\n", 1)[1].rsplit("```", 1)[0]
+    return json.loads(reply)
