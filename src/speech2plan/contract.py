@@ -42,9 +42,12 @@ class Qualifier:
     value: str = field(kw_only=True)
 
 
-UNNAMED_TYPE = "Thing"
-"""The type of a thing the speaker leaves unnamed, as in 'the thing on the sofa',
-which any movable thing fits."""
+class GenericType(StrEnum):
+    """Entity types that name no type of the world."""
+
+    THING = "Thing"
+    """A thing the speaker leaves unnamed, as in 'the thing on the sofa', which any
+    movable thing fits."""
 
 
 class SpatialRelation(StrEnum):

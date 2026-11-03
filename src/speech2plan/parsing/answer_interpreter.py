@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import List, Optional
 
 from speech2plan.parsing.backend import CompletionRequest, LanguageModel
+from speech2plan.settings import Prompts, default_settings
 
 # %% reply shape
 
@@ -23,6 +24,9 @@ class AnswerInterpreter:
     """Maps what a person said onto one of the answers a question offered."""
 
     model: LanguageModel = field(kw_only=True)
+    prompts: Prompts = field(
+        kw_only=True, default_factory=lambda: default_settings().prompts
+    )
 
     def choose(self, question: str, offered: List[str], spoken: str) -> Optional[str]:
         """The offered answer the words mean, or None when none of them does."""
@@ -30,30 +34,12 @@ class AnswerInterpreter:
             return None
         reply = self.model.complete_json(
             CompletionRequest(
-                system=self.system_prompt(question, offered),
+                system=self.prompts.answer_to(question, offered),
                 user=spoken,
                 json_schema=self.reply_schema(offered),
             )
         )
         return reply.get(ReplyKey.CHOICE)
-
-    def system_prompt(self, question: str, offered: List[str]) -> str:
-        """The instructions and the options sent with every answer."""
-        option_lines = "\n".join(f"- {option}" for option in offered)
-        return (
-            "A robot asked a person a question and the person answered. Decide "
-            "which of the offered answers the person meant.\n\n"
-            f"Question:\n{question}\n\n"
-            f"Offered answers:\n{option_lines}\n\n"
-            "Rules:\n"
-            "- Answer with one of the offered answers, copied exactly.\n"
-            "- Answer null when the person meant none of them, or when two of "
-            "them fit equally well.\n"
-            "- Spelling mistakes, shorthand and missing words are expected. "
-            "'ground flor' means the answer about the ground floor.\n"
-            "- Answer with JSON only, no prose and no code fences.\n\n"
-            'Shape:\n{"choice": "<one of the offered answers, or null>"}'
-        )
 
     def reply_schema(self, offered: List[str]) -> dict:
         """The shape of a reply, with the offered answers built into the enum."""

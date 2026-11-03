@@ -4,6 +4,7 @@ import pytest
 from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Room
 
+from speech2plan.contract import SpatialRelation
 from speech2plan.placement import PlacementResolver, QualifierAttribute
 from speech2plan.world_source import PrototypeWard
 
@@ -50,7 +51,7 @@ def test_an_object_above_the_floor_is_still_on_that_storey(ward, resolver):
 
 def test_objects_resolve_to_the_room_they_stand_in(ward, resolver):
     assert {
-        str(entity.name): resolver.room_of(entity)
+        str(entity.name): str(resolver.room_containing(entity).name)
         for entity in ward.get_semantic_annotations_by_type(HasGraspCandidates)
     } == {
         "cup": "kitchen_ground",
@@ -78,16 +79,19 @@ def test_a_floor_qualifier_separates_the_two_kitchens(ward, resolver):
     assert [str(room.name) for room in on_first] == ["kitchen_first"]
 
 
-def test_a_room_qualifier_separates_the_two_cups(ward, resolver):
+def test_the_room_a_cup_is_in_separates_the_two_cups(ward, resolver):
+    kitchen_first = next(
+        room
+        for room in ward.get_semantic_annotations_by_type(Room)
+        if str(room.name) == "kitchen_first"
+    )
     cups = [
         entity
         for entity in ward.get_semantic_annotations_by_type(HasGraspCandidates)
         if type(entity).__name__ == "Cup"
     ]
     in_first_kitchen = [
-        cup
-        for cup in cups
-        if resolver.satisfies(cup, QualifierAttribute.ROOM, "kitchen_first")
+        cup for cup in cups if resolver.relates(cup, SpatialRelation.IN, kitchen_first)
     ]
     assert [str(cup.name) for cup in in_first_kitchen] == ["second_cup"]
 

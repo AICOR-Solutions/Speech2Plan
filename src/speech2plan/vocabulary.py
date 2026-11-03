@@ -118,26 +118,25 @@ class Vocabulary:
 
     def render_schema(self) -> str:
         """The vocabulary as prompt text, with the types but none of their instances."""
-        intent_lines = "\n".join(f"- {intent}" for intent in self.intents)
-        floors = ", ".join(self.floors) or "none"
         return (
-            f"Intents:\n{intent_lines}\n\n"
-            f"Floors: {floors}\n\n"
+            f"{self.render_symbols()}\n\n"
             f"Entity types in the world: {', '.join(self.entity_types)}"
         )
 
     def render(self) -> str:
-        """The vocabulary as prompt text."""
-        intent_lines = "\n".join(f"- {intent}" for intent in self.intents)
+        """The vocabulary as prompt text, with what tells instances apart."""
         type_lines = "\n".join(entry.render() for entry in self.types)
-        floors = ", ".join(self.floors) or "none"
         return (
-            f"Intents:\n{intent_lines}\n\n"
-            f"Floors: {floors}\n\n"
+            f"{self.render_symbols()}\n\n"
             "Entity types in the world. Where a type occurs more than once, what "
             "sets each instance apart follows its count:\n"
             f"{type_lines}"
         )
+
+    def render_symbols(self) -> str:
+        """The intents and the floors."""
+        intent_lines = "\n".join(f"- {intent}" for intent in self.intents)
+        return f"Intents:\n{intent_lines}\n\nFloors: {', '.join(self.floors) or 'none'}"
 
 
 # %% telling instances apart

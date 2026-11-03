@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -43,21 +42,14 @@ from speech2plan.grounding import (
 from speech2plan.parsing.answer_interpreter import AnswerInterpreter
 from speech2plan.placement import QualifierAttribute
 
-CONFIRMED = "confirmed"
-"""Answer key of a question that only confirms the parse."""
-
-FILLER_WORDS = frozenset(
-    {"huh", "hm", "hmm", "uh", "uhm", "um", "ah", "eh", "er", "mhm"}
-)
-"""Words speech recognition makes of noise and hesitation."""
-
-
-def is_filler(sentence: str) -> bool:
-    """Whether `sentence` holds no word but :data:`FILLER_WORDS`."""
-    return set(re.findall(r"[a-z']+", sentence.lower())) <= FILLER_WORDS
-
-
 # %% how the robot talks about a task
+
+
+class AnswerKey(StrEnum):
+    """The answer key of a question that fills no role."""
+
+    CONFIRMED = "confirmed"
+    """The speaker agrees to the task as stated."""
 
 
 class SpokenTask(StrEnum):
@@ -122,7 +114,7 @@ class Question:
     @property
     def answer_key(self) -> str:
         """The key the answer arrives under."""
-        return str(self.role) if self.role else CONFIRMED
+        return str(self.role) if self.role else str(AnswerKey.CONFIRMED)
 
 
 @dataclass
@@ -221,10 +213,10 @@ class Clarifier:
                 if task == stated_task
                 else f"I will {task}. Is that correct?"
             ),
-            answers_schema={CONFIRMED: {"type": "boolean"}},
+            answers_schema={str(AnswerKey.CONFIRMED): {"type": "boolean"}},
             person_id=instruction.speaker,
         )
-        return self.skills.ask(question).get(CONFIRMED) is True
+        return self.skills.ask(question).get(AnswerKey.CONFIRMED) is True
 
     def verbalise(
         self, instruction: ParsedInstruction, outcomes: List[GroundingOutcome]
@@ -440,13 +432,7 @@ class Clarifier:
     ) -> ParsedInstruction:
         """The instruction with `role` narrowed to one named entity."""
         spoken = instruction.constraint_for(role)
-        pinned = EntityConstraint(
-            entity_type=type(entity).__name__,
-            qualifiers=[
-                Qualifier(attribute=QualifierAttribute.NAME, value=str(entity.name))
-            ],
-            spoken_form=spoken.spoken_form if spoken else None,
-        )
+        pinned = self.pinned_to(entity, spoken.spoken_form if spoken else None)
         return replace(
             instruction,
             roles=[binding for binding in instruction.roles if binding.role != role]
@@ -481,19 +467,7 @@ class Clarifier:
         )
         located = EntityConstraint(
             entity_type=spoken.entity_type,
-            relations=[
-                Relation(
-                    relation=relation,
-                    reference=EntityConstraint(
-                        entity_type=type(place).__name__,
-                        qualifiers=[
-                            Qualifier(
-                                attribute=QualifierAttribute.NAME, value=str(place.name)
-                            )
-                        ],
-                    ),
-                )
-            ],
+            relations=[Relation(relation=relation, reference=self.pinned_to(place))],
             spoken_form=spoken.spoken_form,
         )
         return replace(
@@ -506,4 +480,17 @@ class Clarifier:
                 )
                 for binding in instruction.roles
             ],
+        )
+
+    @staticmethod
+    def pinned_to(
+        entity: SemanticAnnotation, spoken_form: Optional[str] = None
+    ) -> EntityConstraint:
+        """A constraint only `entity` matches, by its name."""
+        return EntityConstraint(
+            entity_type=type(entity).__name__,
+            qualifiers=[
+                Qualifier(attribute=QualifierAttribute.NAME, value=str(entity.name))
+            ],
+            spoken_form=spoken_form,
         )

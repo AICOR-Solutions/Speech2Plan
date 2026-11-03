@@ -18,9 +18,9 @@ from semantic_digital_twin.world_description.world_entity import SemanticAnnotat
 
 from speech2plan.contract import (
     EntityConstraint,
+    GenericType,
     ParsedInstruction,
     Qualifier,
-    UNNAMED_TYPE,
     Relation,
     ThematicRole,
 )
@@ -218,7 +218,7 @@ class Grounder:
     def entities_of_type(self, entity_type: Optional[str]) -> List[SemanticAnnotation]:
         """Everything of that type the world holds, qualifiers ignored. An unnamed
         thing is any thing that can be moved, which leaves out rooms and furniture."""
-        if entity_type == UNNAMED_TYPE:
+        if entity_type == GenericType.THING:
             return [
                 entity
                 for entity in self.searchable_entities()
@@ -268,7 +268,7 @@ class Grounder:
         instances = self.entities_of_type(constraint.entity_type)
         if not instances:
             return None
-        if constraint.entity_type == UNNAMED_TYPE:
+        if constraint.entity_type == GenericType.THING:
             return eql.variable(HasGraspCandidates, domain=instances)
         return eql.variable(type(instances[0]), domain=instances)
 

@@ -30,7 +30,6 @@ class QualifierAttribute(StrEnum):
     """Attributes an utterance may use to narrow an entity down."""
 
     FLOOR = "floor"
-    ROOM = "room"
     NAME = "name"
 
 
@@ -59,7 +58,7 @@ class QualifierResolver(ABC):
 
 @dataclass
 class PlacementResolver(QualifierResolver):
-    """Resolves `floor` and `room` qualifiers, and the `on` and `in` relations.
+    """Resolves the `floor` qualifier, and the `on` and `in` relations.
 
     The twin relates neither rooms to levels nor objects to rooms, so both are
     derived from elevation and distance. What rests on or lies in what is read off
@@ -117,23 +116,9 @@ class PlacementResolver(QualifierResolver):
             return None
         return min(distances, key=distances.get)
 
-    def room_of(self, entity: SemanticAnnotation) -> Optional[str]:
-        """The name of the nearest room on the entity's storey, or None."""
-        room = self.room_containing(entity)
-        return None if room is None else str(room.name)
-
-    def room_named(self, name: str) -> Optional[Room]:
-        """The room of that name, or None."""
-        for room in self.world.get_semantic_annotations_by_type(Room):
-            if str(room.name) == name:
-                return room
-        return None
-
     def satisfies(self, entity: SemanticAnnotation, attribute: str, value: str) -> bool:
         if attribute == QualifierAttribute.FLOOR:
             return self.storey_of(entity) == value
-        if attribute == QualifierAttribute.ROOM:
-            return self.room_of(entity) == value
         return False
 
     # %% relations between entities

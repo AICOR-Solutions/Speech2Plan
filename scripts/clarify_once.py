@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 from typing import Dict
 
-from parse_once import describe, parser_for, utterance_in
+from parse_once import describe, options_for, parser_for
 
 from speech2plan.dialogue import Clarifier, DialogueSkills, Question
 from speech2plan.grounding import Grounder
@@ -51,11 +51,11 @@ class ConsoleSkills(DialogueSkills):
 
 
 def main() -> None:
-    utterance = utterance_in(sys.argv[1:], "Bring the cup to the kitchen")
+    options = options_for(__doc__.splitlines()[0], "Bring the cup to the kitchen")
     world = CareWard().load()
     model = ClaudeCommandLineModel()
-    instruction = parser_for(world, model, sys.argv[1:]).parse(
-        utterance, speaker="person_console"
+    instruction = parser_for(world, model, options.query_world).parse(
+        options.utterance, speaker="person_console"
     )
 
     print(f"utterance : {instruction.utterance}")

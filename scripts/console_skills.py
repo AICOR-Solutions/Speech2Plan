@@ -20,6 +20,8 @@ from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
+from speech2plan.ros.skill_client import SkillPath
+
 # %% the skills, on the terminal
 
 
@@ -29,8 +31,8 @@ class ConsoleSkills(Node):
     def __init__(self):
         super().__init__("console_communication_skills")
         group = ReentrantCallbackGroup()
-        ActionServer(self, Say, "/skill/say", self.on_say, callback_group=group)
-        ActionServer(self, Ask, "/skill/ask", self.on_ask, callback_group=group)
+        ActionServer(self, Say, SkillPath.SAY, self.on_say, callback_group=group)
+        ActionServer(self, Ask, SkillPath.ASK, self.on_ask, callback_group=group)
 
     def on_say(self, goal):
         print(f"\nrobot: {goal.request.input}", flush=True)

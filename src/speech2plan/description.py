@@ -13,6 +13,7 @@ from semantic_digital_twin.world_description.world_entity import SemanticAnnotat
 
 from speech2plan.contract import EntityConstraint, Qualifier, Relation
 from speech2plan.placement import PlacementResolver, QualifierAttribute
+from speech2plan.settings import Words, default_settings
 
 # %% words
 
@@ -44,36 +45,9 @@ def indefinite(words: str) -> str:
     return f"{'an' if words[0] in 'aeiou' else 'a'} {words}"
 
 
-def spoken_noun(spoken_form: Optional[str]) -> str:
-    """What the speaker called a thing, without the article: 'the gloves' -> 'gloves'."""
-    words = (spoken_form or "").lower().split()
-    while words and words[0] in (
-        "the",
-        "a",
-        "an",
-        "some",
-        "my",
-        "your",
-        "this",
-        "that",
-    ):
-        words = words[1:]
-    return " ".join(words) or "thing"
-
-
 def is_plural(noun: str) -> bool:
     """Whether a noun reads as plural, which is a guess from its last letters."""
     return noun.endswith("s") and not noun.endswith("ss")
-
-
-PLACE_PREPOSITIONS = frozenset({"on", "in", "inside", "at", "by", "from"})
-"""Words that open an answer saying where something is, as in 'on the table'."""
-
-
-def comparable(phrase: str) -> str:
-    """A phrase stripped of what a person varies freely when saying it."""
-    words = phrase.lower().replace(",", " ").split()
-    return " ".join(word for word in words if word not in ("the", "a", "one"))
 
 
 # %% one entity in words
@@ -140,6 +114,8 @@ class EntityDescriber:
 
     world: World = field(kw_only=True)
     resolver: Optional[PlacementResolver] = field(kw_only=True, default=None)
+    words: Words = field(kw_only=True, default_factory=lambda: default_settings().words)
+    """What a speaker says around the words for a thing."""
 
     def __post_init__(self):
         if self.resolver is None:
@@ -244,23 +220,23 @@ class EntityDescriber:
         self, phrase: str, entities: List[SemanticAnnotation]
     ) -> Optional[SemanticAnnotation]:
         """The entity whose own words match `phrase`, or None."""
-        spoken = comparable(phrase)
+        spoken = self.comparable(phrase)
         words = spoken.split()
         heard = {spoken}
-        if words and words[0] in PLACE_PREPOSITIONS:
+        if words and words[0] in self.words.place_prepositions:
             heard.add(" ".join(words[1:]))
         nouns = [self.describe(entity).noun for entity in entities]
         for entity in entities:
             description = self.describe(entity)
-            said = {comparable(description.phrase)}
+            said = {self.comparable(description.phrase)}
             if nouns.count(description.noun) == 1:
-                said.add(comparable(description.noun))
+                said.add(self.comparable(description.noun))
             for feature_for in self.feature_levels():
                 feature = feature_for(entity)
                 if feature is not None:
-                    said.add(comparable(feature))
-                    said.add(comparable(f"the one {feature}"))
-                    said.add(comparable(f"the {description.noun} {feature}"))
+                    said.add(self.comparable(feature))
+                    said.add(self.comparable(f"the one {feature}"))
+                    said.add(self.comparable(f"the {description.noun} {feature}"))
             if heard & said:
                 return entity
         return None
@@ -299,8 +275,23 @@ class EntityDescriber:
         """What the constraint describes, without where: 'cup', or the speaker's
         own word for a kind of thing the world lacks."""
         if constraint.entity_type is None:
-            return spoken_noun(constraint.spoken_form)
+            return self.spoken_noun(constraint.spoken_form)
         return spoken_words(constraint.entity_type)
+
+    def spoken_noun(self, spoken_form: Optional[str]) -> str:
+        """What the speaker called a thing, without the words before it: 'my pills'
+        -> 'pills'."""
+        words = (spoken_form or "").lower().split()
+        while words and words[0] in self.words.determiners:
+            words = words[1:]
+        return " ".join(words) or "thing"
+
+    def comparable(self, phrase: str) -> str:
+        """A phrase stripped of what a person varies freely when saying it."""
+        words = phrase.lower().replace(",", " ").split()
+        return " ".join(
+            word for word in words if word not in self.words.optional_in_answers
+        )
 
     def relation_phrase(self, relation: Relation) -> str:
         """One relation in words, as in 'on the table in the kitchen'."""
@@ -316,7 +307,4 @@ class EntityDescriber:
         """One qualifier in words, or None when it has none of its own."""
         if qualifier.attribute == QualifierAttribute.FLOOR:
             return f"on the {spoken_words(qualifier.value)}"
-        if qualifier.attribute == QualifierAttribute.ROOM:
-            room = self.resolver.room_named(qualifier.value)
-            return None if room is None else f"in {self.describe(room).phrase}"
         return None

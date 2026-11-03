@@ -15,7 +15,7 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from semantic_digital_twin.adapters.ros.world_synchronizer import WorldSynchronizer
 
 from speech2plan.contract import IntentName, ParsedInstruction
-from speech2plan.dialogue import Clarification, Clarifier, is_filler
+from speech2plan.dialogue import Clarification, Clarifier
 from speech2plan.exceptions import (
     LanguageModelCallFailed,
     SkillCallFailed,
@@ -24,7 +24,7 @@ from speech2plan.exceptions import (
 from speech2plan.grounding import Grounder
 from speech2plan.intent_message import PublishedIntent
 from speech2plan.parsing.instruction_parser import InstructionParser
-from speech2plan.vocabulary import Vocabulary
+from speech2plan.settings import Words, default_settings
 
 # %% topic names
 
@@ -50,6 +50,9 @@ class IntentNodeConfiguration:
     humans_period_seconds: float = field(kw_only=True, default=0.05)
     """How often the ROS4HRI graph is read."""
 
+    words: Words = field(kw_only=True, default_factory=lambda: default_settings().words)
+    """Which utterances are only filler."""
+
 
 class Speech2PlanNode(Node):
     """Publishes hri_actions_msgs/Intent for what a tracked person says."""
@@ -59,14 +62,14 @@ class Speech2PlanNode(Node):
         parser: InstructionParser,
         grounder: Grounder,
         clarifier: Optional[Clarifier] = None,
-        configuration: IntentNodeConfiguration = IntentNodeConfiguration(),
+        configuration: Optional[IntentNodeConfiguration] = None,
         listener: Optional[HRIListener] = None,
     ):
         super().__init__("speech2plan")
         self.parser = parser
         self.grounder = grounder
         self.clarifier = clarifier
-        self.configuration = configuration
+        self.configuration = configuration or IntentNodeConfiguration()
         self.world_synchronizer: Optional[WorldSynchronizer] = None
         """Buffers the changes other processes make to the world, if it is shared."""
         self.handling_instruction = threading.Lock()
@@ -76,7 +79,7 @@ class Speech2PlanNode(Node):
             Intent,
             str(Topic.INTENTS),
             QoSProfile(
-                depth=configuration.queue_depth,
+                depth=self.configuration.queue_depth,
                 history=HistoryPolicy.KEEP_LAST,
                 reliability=ReliabilityPolicy.RELIABLE,
             ),
@@ -88,7 +91,7 @@ class Speech2PlanNode(Node):
 
         self.listener.on_voice(self.on_voice)
         self.create_timer(
-            configuration.humans_period_seconds,
+            self.configuration.humans_period_seconds,
             self.follow_humans,
             callback_group=MutuallyExclusiveCallbackGroup(),
         )
@@ -132,7 +135,7 @@ class Speech2PlanNode(Node):
     def on_speech(self, voice: Voice, utterance: str) -> None:
         """Handle a final utterance, unless it is a filler, an answer, or said while
         another instruction is handled."""
-        if is_filler(utterance):
+        if self.configuration.words.is_filler(utterance):
             return
         if self.clarifier is not None and self.clarifier.skills.took_as_answer(
             utterance
@@ -210,7 +213,6 @@ def main(arguments: Optional[list] = None) -> None:
     from speech2plan.parsing.querying_parser import QueryingInstructionParser
     from speech2plan.ros.fetched_world import FetchedWorld
     from speech2plan.ros.skill_client import SpokenAnswerSkills
-    from speech2plan.world_queries import WorldQueries
     from speech2plan.world_source import CareWard
 
     rclpy.init(args=arguments)
@@ -223,16 +225,8 @@ def main(arguments: Optional[list] = None) -> None:
 
     model = ClaudeCommandLineModel()
     grounder = Grounder(world=world)
-    vocabulary = Vocabulary.from_world(world, describe_instances=not query_world)
-    parser = (
-        QueryingInstructionParser(
-            model=model,
-            vocabulary=vocabulary,
-            queries=WorldQueries(grounder=grounder),
-        )
-        if query_world
-        else InstructionParser(model=model, vocabulary=vocabulary)
-    )
+    parser_type = QueryingInstructionParser if query_world else InstructionParser
+    parser = parser_type.for_world(world, model, grounder=grounder)
     node = Speech2PlanNode(parser=parser, grounder=grounder)
     if is_shared:
         node.world_synchronizer = WorldSynchronizer(

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import re
 import threading
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from enum import StrEnum
+from typing import Dict, List
 
 from communication_skills.action import Ask, Say
 from hri_actions_msgs.msg import Intent
@@ -14,24 +14,28 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from std_skills.msg import Meta
 
-from speech2plan.dialogue import DialogueSkills, Question, is_filler
+from speech2plan.dialogue import DialogueSkills, Question
 from speech2plan.exceptions import SkillCallFailed
+from speech2plan.settings import Words, default_settings
 
 # %% skill paths
 
 
-class SkillPath:
+class SkillPath(StrEnum):
     """Where the ROS4HRI communication skills live."""
 
     SAY = "/skill/say"
     ASK = "/skill/ask"
 
 
-class VoiceTopic:
-    """Where ROS4HRI publishes the tracked voices and what they say."""
+class HumansTopic(StrEnum):
+    """Where ROS4HRI publishes who is tracked, whose voice is whose, and what each
+    voice says."""
 
-    TRACKED = "/humans/voices/tracked"
+    TRACKED_VOICES = "/humans/voices/tracked"
+    TRACKED_PERSONS = "/humans/persons/tracked"
     SPEECH = "/humans/voices/{voice_id}/speech"
+    VOICE_OF_PERSON = "/humans/persons/{person_id}/voice_id"
 
 
 # %% client
@@ -129,13 +133,8 @@ class SpokenAnswerSkills(Ros4HriDialogueSkills):
     any other question by the sentence itself.
     """
 
-    affirmative_words: Tuple[str, ...] = field(
-        kw_only=True,
-        default=("yes", "yeah", "yep", "sure", "correct", "right", "ok", "okay"),
-    )
-    negative_words: Tuple[str, ...] = field(
-        kw_only=True, default=("no", "nope", "not", "wrong")
-    )
+    words: Words = field(kw_only=True, default_factory=lambda: default_settings().words)
+    """Which sentences are filler, and which words say yes or no."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -148,7 +147,7 @@ class SpokenAnswerSkills(Ros4HriDialogueSkills):
         """Sentences taken as answers, which the node must not parse again."""
         self.node.create_subscription(
             IdsList,
-            VoiceTopic.TRACKED,
+            HumansTopic.TRACKED_VOICES,
             self.follow_voices,
             10,
             callback_group=self.speech_group,
@@ -161,14 +160,14 @@ class SpokenAnswerSkills(Ros4HriDialogueSkills):
                 continue
             self.speech_subscriptions[voice_id] = self.node.create_subscription(
                 LiveSpeech,
-                VoiceTopic.SPEECH.format(voice_id=voice_id),
+                HumansTopic.SPEECH.format(voice_id=voice_id),
                 self.on_speech,
                 10,
                 callback_group=self.speech_group,
             )
 
     def on_speech(self, speech: LiveSpeech) -> None:
-        if not self.listening or is_filler(speech.final):
+        if not self.listening or self.words.is_filler(speech.final):
             return
         self.listening = False
         self.answer = speech.final
@@ -189,10 +188,10 @@ class SpokenAnswerSkills(Ros4HriDialogueSkills):
         key = next(iter(answers_schema))
         if answers_schema[key].get("type") != "boolean":
             return {key: spoken}
-        words = set(re.findall(r"[a-z']+", spoken.lower()))
-        if words & set(self.negative_words):
+        words = set(self.words.of(spoken))
+        if words & self.words.negative:
             return {key: False}
-        if words & set(self.affirmative_words):
+        if words & self.words.affirmative:
             return {key: True}
         return {}
 

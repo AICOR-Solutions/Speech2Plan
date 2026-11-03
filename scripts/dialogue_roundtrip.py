@@ -17,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import json
 import threading
 import time
-from dataclasses import dataclass, field
-from typing import Dict
+from dataclasses import dataclass
+from typing import Dict, Optional
 
 import rclpy
 from communication_skills.action import Ask, Say
@@ -44,34 +44,15 @@ from speech2plan.contract import (
     RoleConfidence,
     ThematicRole,
 )
-from speech2plan.dialogue import Clarifier
+from speech2plan.dialogue import AnswerKey, Clarifier
 from speech2plan.grounding import Grounder
 from speech2plan.ros.intent_node import Speech2PlanNode, Topic
-from speech2plan.ros.skill_client import Ros4HriDialogueSkills
+from speech2plan.ros.skill_client import (
+    HumansTopic,
+    Ros4HriDialogueSkills,
+    SkillPath,
+)
 from speech2plan.world_source import PrototypeWard
-
-PERSON_ID = "person_demo"
-VOICE_ID = "voice_demo"
-ANSWERS = {"object": "living room", "goal": "first floor", "confirmed": True}
-"""What the stand-in person answers, by the key the question asks for."""
-
-# %% the topics the robot would publish
-
-
-class HumansTopic:
-    """The ROS4HRI topics the robot would publish, which libhri reads."""
-
-    TRACKED_VOICES = "/humans/voices/tracked"
-    TRACKED_PERSONS = "/humans/persons/tracked"
-
-    @staticmethod
-    def speech(voice_id: str) -> str:
-        return f"/humans/voices/{voice_id}/speech"
-
-    @staticmethod
-    def voice_of(person_id: str) -> str:
-        return f"/humans/persons/{person_id}/voice_id"
-
 
 # %% the robot's side
 
@@ -79,12 +60,18 @@ class HumansTopic:
 class SkillServer(Node):
     """Serves /skill/say and /skill/ask from a script of answers."""
 
-    def __init__(self, answers: Dict[str, str]):
+    def __init__(self, answers: Optional[Dict[str, object]] = None):
         super().__init__("fake_communication_skills")
-        self.answers = answers
+        self.answers = answers or {
+            "object": "living room",
+            "goal": "first floor",
+            str(AnswerKey.CONFIRMED): True,
+        }
+        """What the stand-in person answers, by the key the question asks for."""
+
         group = ReentrantCallbackGroup()
-        ActionServer(self, Say, "/skill/say", self.on_say, callback_group=group)
-        ActionServer(self, Ask, "/skill/ask", self.on_ask, callback_group=group)
+        ActionServer(self, Say, SkillPath.SAY, self.on_say, callback_group=group)
+        ActionServer(self, Ask, SkillPath.ASK, self.on_ask, callback_group=group)
 
     def pick(self, offered: list, hint):
         """The offered option the person's words single out, or the answer itself."""
@@ -119,8 +106,10 @@ class SkillServer(Node):
 class Probe(Node):
     """Announces a tracked person, says one thing, and waits for the intent."""
 
-    def __init__(self):
+    def __init__(self, person_id: str = "person_demo", voice_id: str = "voice_demo"):
         super().__init__("speech2plan_probe")
+        self.person_id = person_id
+        self.voice_id = voice_id
         self.arrived = threading.Event()
         self.intent = None
         self.create_subscription(Intent, Topic.INTENTS, self.on_intent, 10)
@@ -128,7 +117,7 @@ class Probe(Node):
         self.persons = self.create_publisher(IdsList, HumansTopic.TRACKED_PERSONS, 10)
         self.binding = self.create_publisher(
             String,
-            HumansTopic.voice_of(PERSON_ID),
+            HumansTopic.VOICE_OF_PERSON.format(person_id=person_id),
             QoSProfile(
                 depth=1,
                 history=HistoryPolicy.KEEP_LAST,
@@ -139,7 +128,7 @@ class Probe(Node):
         """Latched, as `hri_person_manager` publishes it."""
 
         self.speech = self.create_publisher(
-            LiveSpeech, HumansTopic.speech(VOICE_ID), 10
+            LiveSpeech, HumansTopic.SPEECH.format(voice_id=voice_id), 10
         )
 
     def on_intent(self, message: Intent) -> None:
@@ -154,11 +143,11 @@ class Probe(Node):
         subscribed to this voice, because the per-voice topics only exist once
         it has seen the list.
         """
-        self.binding.publish(String(data=VOICE_ID))
+        self.binding.publish(String(data=self.voice_id))
         deadline = time.time() + timeout
         while time.time() < deadline and not self.subscribed():
-            self.voices.publish(IdsList(ids=[VOICE_ID]))
-            self.persons.publish(IdsList(ids=[PERSON_ID]))
+            self.voices.publish(IdsList(ids=[self.voice_id]))
+            self.persons.publish(IdsList(ids=[self.person_id]))
             time.sleep(0.5)
         time.sleep(1.0)
         return self.subscribed()
@@ -180,8 +169,6 @@ class Probe(Node):
 @dataclass
 class CannedParser:
     """Returns the parse of "bring the cup to the kitchen" without calling out."""
-
-    speaker: str = field(kw_only=True, default=PERSON_ID)
 
     def parse(self, utterance: str, speaker: str = "") -> ParsedInstruction:
         roles = [ThematicRole.OBJECT, ThematicRole.GOAL]
@@ -223,7 +210,7 @@ def main() -> None:
     node.clarifier = Clarifier(
         skills=Ros4HriDialogueSkills(node=node), grounder=grounder
     )
-    server = SkillServer(ANSWERS)
+    server = SkillServer()
     probe = Probe()
 
     executor = MultiThreadedExecutor()
@@ -251,11 +238,8 @@ def build_parser(utterance: str, world):
         return CannedParser()
     from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
     from speech2plan.parsing.instruction_parser import InstructionParser
-    from speech2plan.vocabulary import Vocabulary
 
-    return InstructionParser(
-        model=ClaudeCommandLineModel(), vocabulary=Vocabulary.from_world(world)
-    )
+    return InstructionParser.for_world(world, ClaudeCommandLineModel())
 
 
 if __name__ == "__main__":

@@ -412,7 +412,8 @@ def bring(constraint: EntityConstraint) -> ParsedInstruction:
     )
 
 
-GLOVES = EntityConstraint(entity_type=None, spoken_form="the gloves")
+def gloves():
+    return EntityConstraint(entity_type=None, spoken_form="the gloves")
 
 
 def outcome_for(clarification, role: ThematicRole):
@@ -422,7 +423,7 @@ def outcome_for(clarification, role: ThematicRole):
 def test_a_thing_the_twin_lacks_is_stated_and_its_place_asked(care_ward):
     skills = FakeDialogueSkills()
 
-    clarifier_for(care_ward, skills).clarify(bring(GLOVES))
+    clarifier_for(care_ward, skills).clarify(bring(gloves()))
 
     assert skills.said == [
         "I understood: I will bring the gloves to the kitchen on the ground floor. "
@@ -436,7 +437,7 @@ def test_a_thing_the_twin_lacks_is_stated_and_its_place_asked(care_ward):
 def test_the_place_the_speaker_names_travels_with_the_thing(care_ward):
     skills = FakeDialogueSkills(scripted_answers={"object": "on the side table"})
 
-    clarification = clarifier_for(care_ward, skills).clarify(bring(GLOVES))
+    clarification = clarifier_for(care_ward, skills).clarify(bring(gloves()))
 
     assert len(skills.asked) == 1
     assert isinstance(outcome_for(clarification, ThematicRole.OBJECT), Unmatched)
@@ -453,7 +454,9 @@ def test_a_located_thing_is_confirmed_where_it_is(care_ward):
         scripted_answers={"object": "on the side table", "confirmed": True}
     )
 
-    clarifier_for(care_ward, skills, confirm_before_acting=True).clarify(bring(GLOVES))
+    clarifier_for(care_ward, skills, confirm_before_acting=True).clarify(
+        bring(gloves())
+    )
 
     assert skills.asked[-1].text == (
         "I will bring the gloves on the side table in the bedroom on the ground floor "
@@ -507,10 +510,10 @@ def test_an_answer_may_name_one_the_twin_holds_elsewhere(care_ward):
 def test_where_a_thing_is_is_asked_once(care_ward):
     skills = FakeDialogueSkills(scripted_answers={"object": "in the garage"})
 
-    clarification = clarifier_for(care_ward, skills).clarify(bring(GLOVES))
+    clarification = clarifier_for(care_ward, skills).clarify(bring(gloves()))
 
     assert len(skills.asked) == 1
-    assert clarification.instruction.constraint_for(ThematicRole.OBJECT) == GLOVES
+    assert clarification.instruction.constraint_for(ThematicRole.OBJECT) == gloves()
 
 
 def test_an_unnamed_thing_is_offered_by_what_it_is(care_ward):

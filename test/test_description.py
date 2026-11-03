@@ -133,11 +133,11 @@ def test_a_constraint_is_described_with_its_qualifiers(describer):
         EntityConstraint(
             entity_type="Cup",
             qualifiers=[
-                Qualifier(attribute=QualifierAttribute.ROOM, value="kitchen_first")
+                Qualifier(attribute=QualifierAttribute.FLOOR, value="FirstFloor")
             ],
         )
     )
-    assert described == "the cup in the kitchen on the first floor"
+    assert described == "the cup on the first floor"
 
 
 # %% relations and the care ward

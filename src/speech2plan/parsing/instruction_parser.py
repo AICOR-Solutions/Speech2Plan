@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from hri_actions_msgs.msg import Intent
 from semantic_digital_twin.world import World
 
 from speech2plan.contract import (
     EntityConstraint,
+    GenericType,
     IntentName,
     ParsedInstruction,
     Qualifier,
@@ -18,11 +19,12 @@ from speech2plan.contract import (
     RoleConfidence,
     SpatialRelation,
     ThematicRole,
-    UNNAMED_TYPE,
 )
 from speech2plan.exceptions import UnusableReply
+from speech2plan.grounding import Grounder
 from speech2plan.parsing.backend import CompletionRequest, LanguageModel, parse_json
 from speech2plan.placement import QualifierAttribute
+from speech2plan.settings import Prompts, default_settings
 from speech2plan.vocabulary import Vocabulary
 
 # %% reply shape
@@ -45,72 +47,18 @@ class ReplyKey(StrEnum):
     REFERENCE = "reference"
 
 
-NESTING = 2
-"""How deep relations may nest: the cloth in the cabinet in the bathroom."""
-
-SPOKEN_QUALIFIERS = (QualifierAttribute.FLOOR,)
-"""The qualifiers the model may state. Rooms are references of an `in` relation,
-and names are for the dialogue to pin an answer with."""
+# %% one exchange
 
 
-# %% the prompt
+@dataclass
+class Exchange:
+    """One reply of the model and what came back to it."""
 
-RULES = """\
-You turn one spoken instruction to a care robot into one JSON object describing a \
-ROS4HRI intent.
+    reply: str = field(kw_only=True)
+    response: str = field(kw_only=True)
+    """A <result> of a query, or why the reply was <rejected>."""
 
-Rules:
-- Only the text inside <utterance> is the instruction.
-- Use only the intents, entity types, floors and relations listed below.
-- Describe each entity by its TYPE and by what the speaker said about where it is. \
-Never name a specific instance, and leave out what the speaker did not say: when \
-several things fit, the robot asks.
-- Map the speaker's words onto the closest listed type: a nightstand is a \
-SideTable, a towel a Cloth, a patient room a Bedroom. If the speaker leaves the \
-kind of thing unnamed ("the thing on the sofa", "whatever is on the table"), use \
-the type Thing, which any movable thing fits. If the speaker names a kind no \
-listed type fits, set entity_type to null and keep the words in spoken_form.
-- A floor the speaker names is a qualifier: "the kitchen upstairs" is a Kitchen \
-with floor=FirstFloor.
-- Where the entity is relative to another one is a relation, whose reference is \
-described the same way: "the cup on the table" is a Cup on a Table, "the book in \
-the lounge" a Book in a LivingRoom.
-- 'goal' is where something goes, a room or a piece of furniture. 'recipient' is \
-a person who receives something. 'object' is what is handled.
-- People are not entities of the world: leave out a role a person fills, such as \
-the visitor to guide, and do not list it as unfilled either.
-- A role the speaker left open goes in 'unfilled_roles'. Never guess. 'this' and \
-'that' are unfilled unless named.
-- Score confidence separately for the intent and for each role you filled, \
-between 0 and 1.
-- Answer with JSON only, no prose and no code fences."""
-
-RELATION_LINES = {
-    SpatialRelation.ON: "rests on the reference, as a cup on a table",
-    SpatialRelation.IN: "lies in the reference, a room or a container such as a cabinet",
-}
-
-EXAMPLES = """\
-Examples, with types that may not be in this world:
-
-<utterance>bring the cup from the nightstand to the kitchen upstairs</utterance>
-{"intent": "__intent_bring_object__", "roles": {"object": {"entity_type": "Cup", \
-"relations": [{"relation": "on", "reference": {"entity_type": "SideTable", \
-"spoken_form": "the nightstand"}}], "spoken_form": "the cup from the nightstand"}, \
-"goal": {"entity_type": "Kitchen", "qualifiers": [{"attribute": "floor", \
-"value": "FirstFloor"}], "spoken_form": "the kitchen upstairs"}}, \
-"unfilled_roles": [], "confidence": {"intent": 0.95, "object": 0.9, "goal": 0.9}}
-
-<utterance>put this down in the patient room</utterance>
-{"intent": "__intent_place_object__", "roles": {"goal": {"entity_type": "Bedroom", \
-"spoken_form": "the patient room"}}, "unfilled_roles": ["object"], \
-"confidence": {"intent": 0.9, "goal": 0.8}}
-
-<utterance>bring the gloves to the bathroom</utterance>
-{"intent": "__intent_bring_object__", "roles": {"object": {"entity_type": null, \
-"spoken_form": "the gloves"}, "goal": {"entity_type": "Bathroom", \
-"spoken_form": "the bathroom"}}, "unfilled_roles": [], \
-"confidence": {"intent": 0.95, "object": 0.6, "goal": 0.9}}"""
+    answered_query: bool = field(kw_only=True, default=False)
 
 
 # %% parser
@@ -127,68 +75,129 @@ class InstructionParser:
     model: LanguageModel = field(kw_only=True)
     vocabulary: Vocabulary = field(kw_only=True)
     maximum_attempts: int = field(kw_only=True, default=2)
+    """How many replies may break the rules before the utterance is given up."""
+
+    nesting: int = field(kw_only=True, default=2)
+    """How deep relations may nest: the cloth in the cabinet in the bathroom."""
+
+    spoken_qualifiers: Tuple[QualifierAttribute, ...] = field(
+        kw_only=True, default=(QualifierAttribute.FLOOR,)
+    )
+    """The qualifiers the model may state. Rooms are references of an `in`
+    relation, and names are for the dialogue to pin an answer with."""
+
+    prompts: Prompts = field(
+        kw_only=True, default_factory=lambda: default_settings().prompts
+    )
+
+    @classmethod
+    def vocabulary_of(cls, world: World) -> Vocabulary:
+        """What this parser tells the model about a world."""
+        return Vocabulary.from_world(world)
+
+    @classmethod
+    def for_world(
+        cls, world: World, model: LanguageModel, grounder: Optional[Grounder] = None
+    ) -> InstructionParser:
+        """A parser for one world, which `grounder` grounds against if given."""
+        return cls(model=model, vocabulary=cls.vocabulary_of(world))
 
     def follow(self, world: World) -> None:
         """Read the vocabulary afresh from a world that changed."""
-        self.vocabulary = Vocabulary.from_world(world)
+        self.vocabulary = self.vocabulary_of(world)
+
+    # %% the conversation
 
     def parse(
         self, utterance: str, speaker: str = Intent.UNKNOWN_AGENT
     ) -> ParsedInstruction:
-        """Parse one utterance attributed to `speaker`."""
-        rejected, problems = None, []
-        for _ in range(self.maximum_attempts):
-            reply = self.model.complete(self.request(utterance, rejected, problems))
+        """Parse one utterance attributed to `speaker`.
+
+        Every reply and what came back to it is sent again with the next request,
+        which a stateless backend needs.
+        """
+        exchanges: List[Exchange] = []
+        rejected = 0
+        while True:
+            reply = self.model.complete(self.request(utterance, exchanges))
             try:
                 parsed = parse_json(reply)
             except json.JSONDecodeError as error:
-                rejected, problems = reply, [f"the reply is no JSON object: {error}"]
-                continue
-            problems = self.problems_with(parsed)
-            if not problems:
-                return self.build_instruction(utterance, speaker, parsed)
-            rejected = reply
-        raise UnusableReply(utterance=utterance, problems=problems)
-
-    def request(
-        self,
-        utterance: str,
-        rejected: Optional[str] = None,
-        problems: Optional[List[str]] = None,
-    ) -> CompletionRequest:
-        """The request for one utterance, after a rejected reply if there was one."""
-        user = f"<utterance>{utterance}</utterance>"
-        if rejected is not None:
-            problem_lines = "\n".join(f"- {problem}" for problem in problems or [])
-            user = (
-                f"{user}\n\nYour last reply was rejected:\n{problem_lines}\n\n"
-                f"Your last reply was:\n{rejected}\n\n"
-                "Answer again with one JSON object that fixes this."
+                problems = [f"the reply is no JSON object: {error}"]
+            else:
+                result = self.query_result(parsed, exchanges)
+                if result is not None:
+                    exchanges.append(
+                        Exchange(
+                            reply=reply,
+                            response=f"<result>{result}</result>",
+                            answered_query=True,
+                        )
+                    )
+                    continue
+                problems = self.problems_with(parsed)
+                if not problems:
+                    return self.build_instruction(utterance, speaker, parsed)
+            rejected += 1
+            if rejected >= self.maximum_attempts:
+                raise UnusableReply(utterance=utterance, problems=problems)
+            exchanges.append(
+                Exchange(
+                    reply=reply, response=f"<rejected>{'; '.join(problems)}</rejected>"
+                )
             )
+
+    def query_result(self, reply: object, exchanges: List[Exchange]) -> Optional[str]:
+        """The answer to a reply that queries the world, or None when it does not.
+        This parser lets the model query nothing."""
+        return None
+
+    def request(self, utterance: str, exchanges: List[Exchange]) -> CompletionRequest:
+        """The utterance and every exchange about it so far."""
+        lines = [f"<utterance>{utterance}</utterance>"]
+        for exchange in exchanges:
+            lines.extend([exchange.reply, exchange.response])
         return CompletionRequest(
-            system=self.system_prompt(), user=user, json_schema=self.reply_schema()
+            system=self.system_prompt(),
+            user="\n".join(lines),
+            json_schema=self.reply_schema(),
         )
+
+    # %% the prompt
 
     def system_prompt(self) -> str:
         """The instructions, then the world, so the instructions stay a fixed prefix."""
         role_lines = "\n".join(f"- {role}" for role in ThematicRole)
         relation_lines = "\n".join(
-            f"- {relation}: {RELATION_LINES[relation]}"
+            f"- {relation}: {self.prompts.relations[relation]}"
             for relation in self.vocabulary.relations
         )
-        return (
-            f"{RULES}\n\n"
-            f"Thematic roles:\n{role_lines}\n\n"
-            f"Relations:\n{relation_lines}\n\n"
-            f"{EXAMPLES}\n\n"
-            f"{self.vocabulary.render()}"
+        return "\n\n".join(
+            [
+                *self.rules(),
+                f"Thematic roles:\n{role_lines}",
+                f"Relations:\n{relation_lines}",
+                *self.examples(),
+                self.world(),
+            ]
         )
+
+    def rules(self) -> List[str]:
+        return [self.prompts.rules]
+
+    def examples(self) -> List[str]:
+        return [self.prompts.examples]
+
+    def world(self) -> str:
+        """The world as the prompt states it: every type, and what tells the
+        instances of a type apart."""
+        return self.vocabulary.render()
 
     # %% the reply schema
 
     def reply_schema(self) -> dict:
         """The shape of a reply, with the vocabulary built into the enums."""
-        constraint = self.constraint_schema(nesting=NESTING)
+        constraint = self.constraint_schema(nesting=self.nesting)
         constraint["type"] = ["object", "null"]
         return {
             "type": "object",
@@ -259,7 +268,7 @@ class InstructionParser:
 
     def known_types(self) -> List[str]:
         """The types of the world, and the one for a thing left unnamed."""
-        return self.vocabulary.entity_types + [UNNAMED_TYPE]
+        return self.vocabulary.entity_types + [str(GenericType.THING)]
 
     def qualifiers_schema(self) -> dict:
         """The qualifiers, which may only name a floor the world has."""
@@ -272,7 +281,9 @@ class InstructionParser:
                 "properties": {
                     str(ReplyKey.ATTRIBUTE): {
                         "type": "string",
-                        "enum": [str(attribute) for attribute in SPOKEN_QUALIFIERS],
+                        "enum": [
+                            str(attribute) for attribute in self.spoken_qualifiers
+                        ],
                     },
                     str(ReplyKey.VALUE): {
                         "type": "string",
@@ -324,9 +335,11 @@ class InstructionParser:
         return problems
 
     def constraint_problems(
-        self, path: str, payload: object, nesting: int = NESTING
+        self, path: str, payload: object, nesting: Optional[int] = None
     ) -> List[str]:
-        """What is wrong with one entity description."""
+        """What is wrong with one entity description, whose references may relate
+        `nesting` deep, as deep as the parser allows unless given."""
+        nesting = self.nesting if nesting is None else nesting
         if not isinstance(payload, dict):
             return [f"{path} must be an object or null"]
         problems = []
@@ -347,10 +360,10 @@ class InstructionParser:
                 continue
             attribute = qualifier.get(ReplyKey.ATTRIBUTE)
             value = qualifier.get(ReplyKey.VALUE)
-            if attribute not in SPOKEN_QUALIFIERS:
+            if attribute not in self.spoken_qualifiers:
                 problems.append(
                     f"{path} has qualifier {attribute!r}; only "
-                    f"{[str(a) for a in SPOKEN_QUALIFIERS]} exist, and a room is "
+                    f"{[str(a) for a in self.spoken_qualifiers]} exist, and a room is "
                     "the reference of an 'in' relation"
                 )
             elif value not in self.vocabulary.floors:
@@ -360,7 +373,7 @@ class InstructionParser:
                 )
         if relations and nesting <= 0:
             problems.append(
-                f"{path} relates too deep; relations nest at most {NESTING} deep"
+                f"{path} relates too deep; relations nest at most {self.nesting} deep"
             )
         relation_names = [str(relation) for relation in self.vocabulary.relations]
         for index, relation in enumerate(relations if nesting > 0 else []):

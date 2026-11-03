@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from speech2plan.contract import UNNAMED_TYPE, ParsedInstruction
+from speech2plan.contract import GenericType, ParsedInstruction
 from speech2plan.description import (
     EntityDescriber,
     plural,
@@ -64,7 +64,7 @@ class BeliefReport:
     def about_candidates(self, outcome: Ambiguity) -> str:
         """Where the entities still in question are."""
         choice = self.describer.choose_between(outcome.candidates)
-        if outcome.constraint.entity_type == UNNAMED_TYPE:
+        if outcome.constraint.entity_type == GenericType.THING:
             counted = f"I know of {choice.count} things like that"
             known = choice.count
         else:

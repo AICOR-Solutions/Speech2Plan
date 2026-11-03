@@ -131,6 +131,13 @@ ros2 topic pub --once -w 1 /humans/voices/voice_1/speech hri_msgs/msg/LiveSpeech
   "{final: 'bring the cup to the kitchen', locale: 'en_US'}"
 ```
 
+## Settings
+
+The prompts and the word lists (filler words, determiners, yes and no words)
+live in `src/speech2plan/settings.toml`, read by `speech2plan.settings`. Every
+class that uses them takes them as a parameter, defaulting to that file, so a
+test or experiment can pass its own.
+
 ## Tests
 
 ```bash
