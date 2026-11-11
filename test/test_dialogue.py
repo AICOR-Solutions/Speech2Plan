@@ -15,7 +15,6 @@ from speech2plan.dialogue import Clarifier, RoleQuestion
 from speech2plan.grounding import (
     Ambiguity,
     Grounder,
-    NoAssumption,
     ResolvedRole,
     Unmatched,
 )
@@ -24,6 +23,7 @@ from speech2plan.placement import QualifierAttribute
 from speech2plan.world_source import CareWard, PrototypeWard
 
 from .fake_model import FakeModel
+from .fake_preference import NoAssumption
 from .fake_skills import FakeDialogueSkills
 
 # %% fixtures

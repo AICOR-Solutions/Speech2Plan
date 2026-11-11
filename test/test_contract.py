@@ -29,7 +29,7 @@ def test_only_the_intents_of_the_transport_mission_are_recognised():
 def test_thematic_roles_are_the_documented_keys():
     assert ThematicRole.OBJECT == "object"
     assert ThematicRole.GOAL == "goal"
-    assert ThematicRole.RECIPIENT == "recipient"
+    assert [str(role) for role in ThematicRole] == ["object", "goal"]
 
 
 # %% confidence

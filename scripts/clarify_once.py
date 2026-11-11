@@ -14,6 +14,7 @@ from typing import Dict
 
 from parse_once import describe, options_for
 
+from speech2plan.contract import IntentName
 from speech2plan.dialogue import Clarifier, DialogueSkills, Question
 from speech2plan.grounding import Grounder
 from speech2plan.parsing.answer_interpreter import AnswerInterpreter
@@ -62,6 +63,9 @@ def main() -> None:
     print(f"utterance : {instruction.utterance}")
     print(f"intent    : {instruction.intent}")
     print(f"confidence: {instruction.confidence} (weakest)")
+    if instruction.intent == IntentName.RAW_USER_INPUT:
+        print("no task, nothing to clarify")
+        return
     clarification = Clarifier(
         skills=ConsoleSkills(),
         grounder=Grounder(world=world),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Collection, Dict, List, Optional
+from typing import Collection, Dict, List, Optional
 
 from semantic_digital_twin.semantic_annotations.natural_language import (
     NaturalLanguageDescription,
@@ -12,7 +12,7 @@ from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
 
 from speech2plan.contract import EntityConstraint, Qualifier, Relation
-from speech2plan.placement import PlacementResolver, QualifierAttribute
+from speech2plan.placement import PlacementResolver, QualifierAttribute, number_of
 from speech2plan.settings import Words, default_settings
 
 # %% words
@@ -52,11 +52,6 @@ def bare_noun(spoken_form: Optional[str], determiners: Collection[str]) -> str:
     while words and words[0] in determiners:
         words = words[1:]
     return " ".join(words)
-
-
-def is_plural(noun: str) -> bool:
-    """Whether a noun reads as plural, which is a guess from its last letters."""
-    return noun.endswith("s") and not noun.endswith("ss")
 
 
 # %% one entity in words
@@ -152,47 +147,24 @@ class EntityDescriber:
         return None
 
     def feature_of(self, entity: SemanticAnnotation) -> Optional[str]:
-        """Where the entity is, in words, which is what tells namesakes apart."""
+        """The number the entity carries, or else where it is, in words, which is
+        what tells namesakes apart."""
+        number = number_of(entity)
+        if number is not None:
+            return f"number {number}"
         if isinstance(entity, Room):
             storey = self.resolver.storey_of(entity)
             return None if storey is None else f"on the {spoken_words(storey)}"
         room = self.resolver.room_containing(entity)
         return None if room is None else f"in {self.describe(room).phrase}"
 
-    def place_feature(self, entity: SemanticAnnotation) -> Optional[str]:
-        """What the entity lies in or stands on, in words, as in 'on the table'."""
-        container = self.resolver.container_of(entity)
-        if container is not None:
-            return f"in {definite(self.describe(container).noun)}"
-        support = self.resolver.support_of(entity)
-        if support is not None:
-            return f"on {definite(self.describe(support).noun)}"
-        return None
-
-    def placed_room_feature(self, entity: SemanticAnnotation) -> Optional[str]:
-        """What the entity is on or in, and in which room, as in
-        'on the table in the kitchen on the ground floor'."""
-        place, room = self.place_feature(entity), self.feature_of(entity)
-        if place is None or room is None:
-            return None
-        return f"{place} {room}"
-
-    def described_feature(self, entity: SemanticAnnotation) -> Optional[str]:
-        """The feature the entity is described by, which the twin's own words leave out."""
-        return self.describe(entity).feature
-
-    def feature_levels(self) -> List[Callable[[SemanticAnnotation], Optional[str]]]:
-        """The ways to set an entity apart, the shortest that works first."""
-        return [self.described_feature, self.place_feature, self.placed_room_feature]
-
     def choose_between(self, entities: List[SemanticAnnotation]) -> Choice:
         """The options for a question offering these entities.
 
-        Things of different kinds are told apart by what they are. Among things of
-        one kind the room comes first, which is how a person tells most things
-        apart; what they stand on or lie in comes next. Entities that share their words at every
-        level leave no options at all, because a choice nobody can answer is worse
-        than an open question.
+        Places of different kinds are told apart by what they are, places of one kind
+        by their number, their floor or the room they stand in. Places their words cannot tell apart leave no
+        options at all, because a choice nobody can answer is worse than an open
+        question.
         """
         descriptions = [self.describe(entity) for entity in entities]
         nouns = [description.noun for description in descriptions]
@@ -205,25 +177,18 @@ class EntityDescriber:
                 count=len(entities),
             )
         noun = nouns[0] if len(set(nouns)) == 1 else "one"
-        for feature_for in self.feature_levels():
-            features = [feature_for(entity) for entity in entities]
-            if None in features:
-                continue
-            spoken = [
-                (
-                    f"the one {feature}"
-                    if noun != "one"
-                    else f"the {description.noun} {feature}"
-                )
-                for feature, description in zip(features, descriptions)
-            ]
-            if len(set(spoken)) == len(spoken):
-                return Choice(
-                    noun=noun,
-                    entity_per_option=dict(zip(spoken, entities)),
-                    count=len(entities),
-                )
-        return Choice(noun=noun, entity_per_option={}, count=len(entities))
+        features = [description.feature for description in descriptions]
+        spoken = [
+            f"the one {feature}" if noun != "one" else f"the {description.noun} {feature}"
+            for feature, description in zip(features, descriptions)
+        ]
+        if None in features or len(set(spoken)) < len(spoken):
+            return Choice(noun=noun, entity_per_option={}, count=len(entities))
+        return Choice(
+            noun=noun,
+            entity_per_option=dict(zip(spoken, entities)),
+            count=len(entities),
+        )
 
     def entity_for_phrase(
         self, phrase: str, entities: List[SemanticAnnotation]
@@ -240,12 +205,11 @@ class EntityDescriber:
             said = {self.comparable(description.phrase)}
             if nouns.count(description.noun) == 1:
                 said.add(self.comparable(description.noun))
-            for feature_for in self.feature_levels():
-                feature = feature_for(entity)
-                if feature is not None:
-                    said.add(self.comparable(feature))
-                    said.add(self.comparable(f"the one {feature}"))
-                    said.add(self.comparable(f"the {description.noun} {feature}"))
+            if description.feature is not None:
+                feature = description.feature
+                said.add(self.comparable(feature))
+                said.add(self.comparable(f"the one {feature}"))
+                said.add(self.comparable(f"the {description.noun} {feature}"))
             if heard & said:
                 return entity
         return None
@@ -313,4 +277,6 @@ class EntityDescriber:
         """One qualifier in words, or None when it has none of its own."""
         if qualifier.attribute == QualifierAttribute.FLOOR:
             return f"on the {spoken_words(qualifier.value)}"
+        if qualifier.attribute == QualifierAttribute.NUMBER:
+            return f"number {qualifier.value}"
         return None

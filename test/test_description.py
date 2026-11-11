@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import pytest
-from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
 from semantic_digital_twin.semantic_annotations.natural_language import (
     NaturalLanguageDescription,
 )
-from semantic_digital_twin.semantic_annotations.semantic_annotations import (
-    Furniture,
-    Room,
-)
+from semantic_digital_twin.semantic_annotations.semantic_annotations import Table
+from semantic_digital_twin.world_description.geometry import Scale
 
 from speech2plan.contract import (
     EntityConstraint,
@@ -17,6 +14,7 @@ from speech2plan.contract import (
     SpatialRelation,
 )
 from speech2plan.description import EntityDescriber, spoken_words
+from speech2plan.grounding import Grounder
 from speech2plan.placement import QualifierAttribute
 from speech2plan.world_source import CareWard, PrototypeWard
 
@@ -34,12 +32,12 @@ def describer(ward):
 
 
 def named(world, name: str):
-    """The entity of that name, room or object."""
-    for annotation_type in (Room, HasGraspCandidates, Furniture):
-        for entity in world.get_semantic_annotations_by_type(annotation_type):
-            if str(entity.name) == name:
-                return entity
-    raise LookupError(name)
+    """The place of that name."""
+    return next(
+        entity
+        for entity in Grounder(world=world).searchable_entities()
+        if str(entity.name) == name
+    )
 
 
 # %% type names become words
@@ -59,26 +57,26 @@ def test_a_room_is_described_by_its_storey(ward, describer):
     )
 
 
-def test_an_object_is_described_by_its_room(ward, describer):
-    assert describer.describe(named(ward, "cup")).phrase == (
-        "the cup in the kitchen on the ground floor"
+def test_furniture_is_described_by_its_room(ward, describer):
+    assert describer.describe(named(ward, "table")).phrase == (
+        "the table in the kitchen on the ground floor"
     )
 
 
-def test_the_twins_own_description_wins(ward):
+def test_the_twins_own_description_wins():
     world = PrototypeWard().load()
-    cup = named(world, "cup")
+    table = named(world, "table")
     with world.modify_world():
         world.add_semantic_annotations(
             [
                 NaturalLanguageDescription(
-                    root=cup.root, description="blue mug with a chipped handle"
+                    root=table.root, description="long oak table by the window"
                 )
             ]
         )
 
-    assert EntityDescriber(world=world).describe(cup).phrase == (
-        "the blue mug with a chipped handle"
+    assert EntityDescriber(world=world).describe(table).phrase == (
+        "the long oak table by the window"
     )
 
 
@@ -100,13 +98,18 @@ def test_two_kitchens_are_offered_by_their_floors(ward, describer):
     }
 
 
-def test_namesakes_in_one_room_cannot_be_offered(ward, describer):
-    plates = [named(ward, "plate"), named(ward, "other_plate")]
+def test_namesakes_in_one_room_cannot_be_offered():
+    world = PrototypeWard().load()
+    with world.modify_world():
+        Table.create_with_new_body_in_world(
+            name="other_table", world=world, scale=Scale(0.6, 0.6, 0.75)
+        )
+    tables = [named(world, "table"), named(world, "other_table")]
 
-    choice = describer.choose_between(plates)
+    choice = EntityDescriber(world=world).choose_between(tables)
 
     assert not choice.is_separable
-    assert choice.noun == "plate"
+    assert choice.noun == "table"
     assert choice.count == 2
 
 
@@ -114,15 +117,15 @@ def test_namesakes_in_one_room_cannot_be_offered(ward, describer):
 
 
 def test_an_answer_in_words_finds_the_entity(ward, describer):
-    cups = [named(ward, "cup"), named(ward, "second_cup")]
+    kitchens = [named(ward, "kitchen_ground"), named(ward, "kitchen_first")]
 
-    found = describer.entity_for_phrase("in the kitchen on the first floor", cups)
+    found = describer.entity_for_phrase("on the first floor", kitchens)
 
-    assert str(found.name) == "second_cup"
+    assert str(found.name) == "kitchen_first"
 
 
 def test_words_nothing_matches_find_nothing(ward, describer):
-    assert describer.entity_for_phrase("in the garage", [named(ward, "cup")]) is None
+    assert describer.entity_for_phrase("in the garage", [named(ward, "table")]) is None
 
 
 # %% constraints in words
@@ -131,13 +134,13 @@ def test_words_nothing_matches_find_nothing(ward, describer):
 def test_a_constraint_is_described_with_its_qualifiers(describer):
     described = describer.describe_constraint(
         EntityConstraint(
-            entity_type="Cup",
+            entity_type="Kitchen",
             qualifiers=[
                 Qualifier(attribute=QualifierAttribute.FLOOR, value="FirstFloor")
             ],
         )
     )
-    assert described == "the cup on the first floor"
+    assert described == "the kitchen on the first floor"
 
 
 # %% relations and the care ward
@@ -151,31 +154,31 @@ def care_ward():
 def test_a_relation_is_described_in_words(describer):
     described = describer.describe_constraint(
         EntityConstraint(
-            entity_type="Cup",
+            entity_type="Table",
             relations=[
                 Relation(
-                    relation=SpatialRelation.ON,
-                    reference=EntityConstraint(entity_type="Table"),
+                    relation=SpatialRelation.IN,
+                    reference=EntityConstraint(entity_type="Kitchen"),
                 )
             ],
         )
     )
-    assert described == "the cup on the table"
+    assert described == "the table in the kitchen"
 
 
 def test_a_reference_pinned_by_name_is_described_as_that_entity(care_ward):
     described = EntityDescriber(world=care_ward).describe_constraint(
         EntityConstraint(
-            entity_type="Cup",
+            entity_type="SideTable",
             relations=[
                 Relation(
-                    relation=SpatialRelation.ON,
+                    relation=SpatialRelation.IN,
                     reference=EntityConstraint(
-                        entity_type="SideTable",
+                        entity_type="Bedroom",
                         qualifiers=[
                             Qualifier(
                                 attribute=QualifierAttribute.NAME,
-                                value="bedside_table",
+                                value="patient_room",
                             )
                         ],
                     ),
@@ -183,37 +186,21 @@ def test_a_reference_pinned_by_name_is_described_as_that_entity(care_ward):
             ],
         )
     )
-    assert described == ("the cup on the side table in the bedroom on the ground floor")
+    assert described == "the side table in the bedroom on the ground floor"
 
 
-def test_a_thing_of_no_known_type_is_described_in_the_speakers_words(describer):
+def test_a_place_of_no_known_type_is_described_in_the_speakers_words(describer):
     assert (
         describer.describe_constraint(
-            EntityConstraint(entity_type=None, spoken_form="the gloves")
+            EntityConstraint(entity_type=None, spoken_form="the pharmacy")
         )
-        == "the gloves"
+        == "the pharmacy"
     )
 
 
-def test_what_a_thing_stands_on_sets_apart_namesakes_in_one_room(care_ward):
-    cups = [named(care_ward, "cup"), named(care_ward, "counter_cup")]
-    choice = EntityDescriber(world=care_ward).choose_between(cups)
-    assert {
-        option: str(entity.name) for option, entity in choice.entity_per_option.items()
-    } == {
-        "the one on the table": "cup",
-        "the one on the counter top": "counter_cup",
-    }
-
-
-def test_what_a_thing_lies_in_is_a_feature(care_ward):
-    describer = EntityDescriber(world=care_ward)
-    assert describer.place_feature(named(care_ward, "towel")) == "in the cabinet"
-
-
-def test_an_answer_saying_where_finds_the_entity(care_ward):
-    cups = [named(care_ward, "cup"), named(care_ward, "counter_cup")]
+def test_an_answer_saying_where_finds_the_place(care_ward):
+    tables = [named(care_ward, "table"), named(care_ward, "first_floor_table")]
     found = EntityDescriber(world=care_ward).entity_for_phrase(
-        "on the counter top", cups
+        "in the kitchen on the first floor", tables
     )
-    assert str(found.name) == "counter_cup"
+    assert str(found.name) == "first_floor_table"

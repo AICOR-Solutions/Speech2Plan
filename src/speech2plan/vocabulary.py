@@ -24,6 +24,7 @@ from speech2plan.placement import (
     PlacementResolver,
     PlacementSnapshot,
     QualifierAttribute,
+    number_of,
 )
 
 # %% what the world offers
@@ -67,14 +68,16 @@ class Vocabulary:
     floors: List[str] = field(kw_only=True, default_factory=list)
     """The storeys a `floor` qualifier may name."""
 
+    numbers: List[str] = field(kw_only=True, default_factory=list)
+    """The numbers a `number` qualifier may name, as on the doors of rooms."""
+
     relations: List[SpatialRelation] = field(
         kw_only=True, default_factory=lambda: list(SpatialRelation)
     )
 
     @classmethod
-    def from_world(cls, world: World, describe_instances: bool = True) -> Vocabulary:
-        """Read the entity types out of a world, with what tells instances apart
-        unless `describe_instances` is off, which saves the time it takes."""
+    def from_world(cls, world: World) -> Vocabulary:
+        """Read the place types out of a world, with what tells instances apart."""
         snapshot = PlacementSnapshot(world=world)
         describer = InstanceDescriber(
             grounder=Grounder(world=world, qualifier_resolver=snapshot),
@@ -91,7 +94,7 @@ class Vocabulary:
                     count=len(entities),
                     places=(
                         [describer.distinguishing(entity) for entity in entities]
-                        if describe_instances and len(entities) > 1
+                        if len(entities) > 1
                         else []
                     ),
                 )
@@ -103,40 +106,33 @@ class Vocabulary:
                     for level in world.get_semantic_annotations_by_type(Level)
                 }
             ),
+            numbers=sorted(
+                {
+                    number
+                    for number in map(
+                        number_of, describer.grounder.searchable_entities()
+                    )
+                    if number is not None
+                }
+            ),
         )
 
     @property
     def entity_types(self) -> List[str]:
         return sorted(entry.entity_type for entry in self.types)
 
-    def count_of(self, entity_type: str) -> int:
-        """How many entities of that type the world holds."""
-        for entry in self.types:
-            if entry.entity_type == entity_type:
-                return entry.count
-        return 0
-
-    def render_schema(self) -> str:
-        """The vocabulary as prompt text, with the types but none of their instances."""
-        return (
-            f"{self.render_symbols()}\n\n"
-            f"Entity types in the world: {', '.join(self.entity_types)}"
-        )
-
     def render(self) -> str:
-        """The vocabulary as prompt text, with what tells instances apart."""
+        """The vocabulary as prompt text: the intents, the floors, and the place types
+        with what tells their instances apart, numbers included."""
+        intent_lines = "\n".join(f"- {intent}" for intent in self.intents)
         type_lines = "\n".join(entry.render() for entry in self.types)
         return (
-            f"{self.render_symbols()}\n\n"
+            f"Intents:\n{intent_lines}\n\n"
+            f"Floors: {', '.join(self.floors) or 'none'}\n\n"
             "Entity types in the world. Where a type occurs more than once, what "
             "sets each instance apart follows its count:\n"
             f"{type_lines}"
         )
-
-    def render_symbols(self) -> str:
-        """The intents and the floors."""
-        intent_lines = "\n".join(f"- {intent}" for intent in self.intents)
-        return f"Intents:\n{intent_lines}\n\nFloors: {', '.join(self.floors) or 'none'}"
 
 
 # %% telling instances apart
@@ -168,16 +164,13 @@ class InstanceDescriber:
     def places_of(self, entity: SemanticAnnotation) -> List[Place]:
         """Everything that can be said about where the entity is, most telling first."""
         places: List[Place] = []
+        number = number_of(entity)
+        if number is not None:
+            places.append(Qualifier(attribute=QualifierAttribute.NUMBER, value=number))
         if not isinstance(entity, Room):
             room = self.resolver.room_containing(entity)
             if room is not None:
                 places.append(self.relation_to(SpatialRelation.IN, room))
-            container = self.resolver.container_of(entity)
-            if container is not None:
-                places.append(self.relation_to(SpatialRelation.IN, container))
-            support = self.resolver.support_of(entity)
-            if support is not None:
-                places.append(self.relation_to(SpatialRelation.ON, support))
         storey = self.resolver.storey_of(entity)
         if storey is not None:
             places.append(Qualifier(attribute=QualifierAttribute.FLOOR, value=storey))

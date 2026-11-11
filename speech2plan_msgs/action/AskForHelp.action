@@ -1,5 +1,6 @@
 # Ask the people around the robot for help, as a question they answer with yes or no:
-# to put an item on the tray or take it off, or whether to try a failed step again.
+# to put an item on the tray or take it off, whether it may board the elevator with
+# them, or whether to try a failed step again.
 # Served by the HRI module, which says the question and hears the answer.
 
 std_skills/Meta meta
@@ -7,6 +8,7 @@ std_skills/Meta meta
 # Why the robot asks.
 string LOAD_TRAY = load_tray
 string UNLOAD_TRAY = unload_tray
+string BOARD_ELEVATOR = board_elevator
 string STEP_FAILED = step_failed
 string problem
 

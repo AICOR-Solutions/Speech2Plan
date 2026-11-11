@@ -10,7 +10,7 @@ from rclpy.task import Future
 
 from speech2plan.dialogue import AnswerKey, Question
 from speech2plan.exceptions import SkillCallFailed
-from speech2plan.ros.skill_client import Ros4HriDialogueSkills, SpokenAnswerSkills
+from speech2plan.ros.skill_client import SpokenAnswerSkills
 
 # %% stand-ins
 
@@ -94,24 +94,18 @@ def spoken(ros):
     node.destroy_node()
 
 
-# %% a question nobody answers
+# %% a sentence that is never said
 
 
-def test_an_unanswered_question_is_cancelled_on_the_server(ros):
+def test_a_sentence_never_finished_is_cancelled_on_the_server(ros):
     node = rclpy.create_node("skill_client_under_test")
-    skills = Ros4HriDialogueSkills(node=node, answer_timeout_seconds=0.1)
-    skills.ask_client = ServerWithUnansweredGoals()
+    skills = SpokenAnswerSkills(node=node, answer_timeout_seconds=0.1)
+    skills.say_client = ServerWithUnansweredGoals()
 
     with pytest.raises(SkillCallFailed):
-        skills.ask(
-            Question(
-                text="Is that correct?",
-                person_id="person_abc",
-                answers_schema={"confirmed": {"type": "boolean"}},
-            )
-        )
+        skills.say("I am heading to the kitchen.", "person_abc")
 
-    assert skills.ask_client.goal.cancelled
+    assert skills.say_client.goal.cancelled
     node.destroy_node()
 
 

@@ -42,9 +42,8 @@ class AnswerKey(StrEnum):
 
 
 class SpokenTask(StrEnum):
-    """What each intent sounds like, with a placeholder per thematic role."""
+    """What each task sounds like, with a placeholder per thematic role."""
 
-    RAW_USER_INPUT = "do what you asked for"
     MOVE_TO = "go to {goal}"
     BRING_OBJECT = "bring {object} to {goal}"
 
@@ -52,23 +51,15 @@ class SpokenTask(StrEnum):
 class OpenRole(StrEnum):
     """How to say a role nobody has pinned down yet."""
 
-    AGENT = "someone"
     OBJECT = "something"
     GOAL = "somewhere"
-    RECIPIENT = "someone"
-    INPUT = "something"
-    LOCALE = "some language"
 
 
 class RoleQuestion(StrEnum):
     """What to ask for a role the speaker left open."""
 
-    AGENT = "Who should do that?"
     OBJECT = "What should I take?"
     GOAL = "Where should I take it?"
-    RECIPIENT = "Who should get it?"
-    INPUT = "What should I say?"
-    LOCALE = "Which language should I use?"
 
 
 # %% what the robot needs to say or ask
@@ -368,13 +359,13 @@ class Clarifier:
         """What an answer to this question may mean, by the words for it."""
         if question.options:
             return {
-                option: self.grounder.entity_named(name)
+                option: self.describer.entity_named(name)
                 for option, name in question.options.items()
             }
         return {
             self.describer.describe(entity).phrase: entity
             for entity in (
-                self.grounder.entity_named(name) for name in question.candidates
+                self.describer.entity_named(name) for name in question.candidates
             )
             if entity is not None
         }

@@ -9,7 +9,6 @@ from krrood.entity_query_language.predicate import symbolic_function
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Agent,
     Furniture,
-    Handle,
     Room,
 )
 from semantic_digital_twin.world import World
@@ -93,14 +92,6 @@ class CandidatePreference(ABC):
 
 
 @dataclass
-class NoAssumption(CandidatePreference):
-    """Assumes nothing, so every entity that matched stays in question."""
-
-    def narrow(self, candidates: List[SemanticAnnotation]) -> List[SemanticAnnotation]:
-        return candidates
-
-
-@dataclass
 class AgentStoreyPreference(CandidatePreference):
     """Prefers the candidates on the storey the agents of the world stand on.
 
@@ -177,11 +168,6 @@ class Grounder:
     )
     """Annotation bases an utterance may name as a place."""
 
-    excluded_types: Tuple[Type[SemanticAnnotation], ...] = field(
-        kw_only=True, default=(Handle,)
-    )
-    """Parts of something else, which an utterance never names on their own."""
-
     preference: Optional[CandidatePreference] = field(kw_only=True, default=None)
     """Which candidate to assume when the words leave several."""
 
@@ -203,16 +189,8 @@ class Grounder:
         found = {}
         for searchable in self.searchable_types:
             for entity in self.world.get_semantic_annotations_by_type(searchable):
-                if not isinstance(entity, self.excluded_types):
-                    found[str(entity.name)] = entity
+                found[str(entity.name)] = entity
         return list(found.values())
-
-    def entity_named(self, name: str) -> Optional[SemanticAnnotation]:
-        """The entity with that name, or None."""
-        for entity in self.searchable_entities():
-            if str(entity.name) == name:
-                return entity
-        return None
 
     def entities_of_type(self, entity_type: Optional[str]) -> List[SemanticAnnotation]:
         """Everything of that type the world holds, qualifiers ignored."""

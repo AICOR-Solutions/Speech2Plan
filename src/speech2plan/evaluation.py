@@ -48,10 +48,6 @@ class ExpectedGrounding:
         return cls(status=GroundingStatus.RESOLVED, entity=entity)
 
     @classmethod
-    def ambiguous(cls) -> ExpectedGrounding:
-        return cls(status=GroundingStatus.AMBIGUOUS)
-
-    @classmethod
     def unmatched(cls) -> ExpectedGrounding:
         return cls(status=GroundingStatus.UNMATCHED)
 

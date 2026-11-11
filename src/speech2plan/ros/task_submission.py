@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import List
@@ -14,6 +13,7 @@ from speech2plan_msgs.action import CarryOutIntent
 from std_skills.msg import Meta
 
 from speech2plan.exceptions import SkillCallFailed
+from speech2plan.ros.skill_client import completes
 
 # %% where tasks go
 
@@ -25,14 +25,6 @@ class TaskSkillPath(StrEnum):
 
 
 # %% submitting
-
-
-def completes(future: Future, timeout_seconds: float) -> bool:
-    """Whether `future` completes within `timeout_seconds`, completed by an executor
-    on another thread."""
-    done = threading.Event()
-    future.add_done_callback(lambda _: done.set())
-    return done.wait(timeout=timeout_seconds)
 
 
 @dataclass

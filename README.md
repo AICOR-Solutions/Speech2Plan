@@ -23,18 +23,21 @@ Prototype. The LLM is the `claude` command line.
    person the voice belongs to.
 2. World changes from other processes are applied, then the LLM gets the
    utterance and one line per place type in the world (rooms and furniture, not
-   parts such as handles, not the things lying about), with what sets the
+   not the things lying about), with what sets the
    instances of a type apart, but no instance names:
-   `- Table (2): in Kitchen floor=GroundFloor | floor=FirstFloor`.
+   `- Table (2): in Kitchen floor=GroundFloor | floor=FirstFloor`. Places that
+   carry a number, as the rooms of the IAI office do, are listed by it
+   (`- Room (82): number=0.30 | ... | number=2.58 | ...`), and "room two point
+   five eight" becomes a Room with `number=2.58`.
    It answers with an intent, the item in the speaker's words
    (`{"spoken_form": "the insulin"}`), and the goal as a description: a type, a
-   `floor`, and relations to other described places (`in` a Bedroom). Types and
+   `floor` or a `number`, and the room it lies `in`. Types and
    floors are restricted to those in the world; a place of no known type keeps
    only the speaker's words. A reply that breaks the rules goes back to the LLM
    once, with what was wrong.
 3. The grounder turns the goal into an entity query (krrood's EQL): one variable
-   over the instances of the type, one more per relation over the instances of
-   the reference, joined by `SupportedBy` / `InsideOf`. It resolves the goal to
+   over the instances of the type, one more over the rooms it is said to lie in,
+   joined by which room each place stands in. It resolves the goal to
    one instance, or marks it ambiguous, unmatched or unfilled. Several candidates
    on different floors are settled by the floor the people and the robot are on,
    recorded as `assumed`.
@@ -54,8 +57,9 @@ Prototype. The LLM is the `claude` command line.
    logged. If no executive is there, or it is busy with another task, the robot
    says it cannot take the task on.
 6. While the robot carries a task out, the plan executive asks people for help
-   through `/skill/ask_for_help`: to put the item on the tray, to take it off, or
-   whether to try a failed step again. This node says the question and reads the
+   through `/skill/ask_for_help`: to put the item on the tray, to take it off,
+   whether it may board the elevator with the people there, or whether to try a
+   failed step again. This node says the question and reads the
    yes or no from the words alone, without the LLM, so it works where the robot
    has no network, as in the elevator. No instruction dialogue runs while a
    question is out.
@@ -79,7 +83,8 @@ starts (`step`, `step_number`, `step_count`) and what the robot does (`RUNNING`,
 for, `ROS_EBADMSG` for roles naming nothing to act on, `ROS_ECANCELED`,
 `ROS_EOTHER` when a step failed and people could not help) and the `records` of
 what happened at the tray ("delivered the insulin to 2.58"). `AskForHelp`: the
-goal is the `problem` (`load_tray`, `unload_tray`, `step_failed`) and the `text`
+goal is the `problem` (`load_tray`, `unload_tray`, `board_elevator`,
+`step_failed`) and the `text`
 to say, ending in a yes or no question; the result is whether the answer was
 `yes`. Build them into the colcon workspace next to this repository:
 
@@ -111,10 +116,9 @@ intent.
   served, then kept current by a `WorldSynchronizer` whose updates are applied
   before each utterance
 - `CareWard`: the fallback, the prototype ward plus a patient room, a lounge and
-  furniture (a counter, sofas, a bedside table, a bathroom cabinet); the everyday
-  objects in it are not grounded
-- `PrototypeWard`: the small two storey ward the tests use
-- `ElevatorBuilding`: the CRAM elevator test building with named rooms and a TIAGo
+  furniture (a counter, sofas, a bedside table, a bathroom cabinet)
+- `PrototypeWard`: the small two storey ward the tests use, with a cup on its
+  table, which is no place
 
 ## Planning
 
@@ -145,7 +149,7 @@ python3 scripts/dialogue_roundtrip.py                          # node + stand-in
 The node over real topics, one command per terminal:
 
 ```bash
-python3 scripts/console_skills.py      # serves /skill/say and /skill/ask on the terminal
+python3 scripts/console_skills.py      # serves /skill/say on the terminal
 python3 scripts/console_skills.py --with-executive   # and prints the submitted tasks
 ./scripts/run_node.sh                  # the node
 
@@ -187,8 +191,9 @@ prefix `CYCLONEDDS_URI=` or append `2>/dev/null`.
 
 ## Known gaps
 
-- Confidence is not calibrated; descriptions are a `floor` and `on` / `in`
-  relations, no directions such as "the room next to the lift" yet
+- Confidence is not calibrated; a place is described by its type, `floor`,
+  `number` and the room it lies `in`, no directions such as "the room next to
+  the lift" yet
 - Help is a yes or no: people can let the robot try again or stop it, not tell
   it what to do instead, and the executive acts only on roles that name an
   entity (`data`), not on the constraints under `other_data`

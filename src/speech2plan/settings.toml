@@ -23,6 +23,9 @@ Bedroom, a nightstand a SideTable. If the speaker names a place no listed type \
 fits, set entity_type to null and keep the words in spoken_form.
 - A floor the speaker names is a qualifier: "the kitchen upstairs" is a Kitchen \
 with floor=FirstFloor.
+- A number the speaker names is a qualifier too, written as the entity types \
+below list it: "room two point five eight" is a Room with number=2.58. Use the \
+type that lists the number.
 - Where a place is relative to another one is a relation, whose reference is \
 described the same way: "the table in the lounge" is a Table in a LivingRoom.
 - 'object' is what the robot brings. Give only the speaker's words for it, as \
@@ -93,8 +96,7 @@ Shape:
 
 # What each spatial relation means, one line each in the prompt.
 [prompts.relations]
-on = "stands on the reference, as a lamp on a table"
-in = "lies in the reference, as a bed in a patient room"
+in = "lies in the reference, a room, as a bed in a patient room"
 
 [words]
 # Words speech recognition makes of noise and hesitation.

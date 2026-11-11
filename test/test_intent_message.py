@@ -90,7 +90,7 @@ def test_the_item_is_no_constraint():
 
 def test_the_utterance_travels_as_input(ward):
     message = publish(ward, "go to the table", ThematicRole.GOAL, entity_type="Table")
-    assert json.loads(message.data)[ThematicRole.INPUT] == "go to the table"
+    assert json.loads(message.data)[PayloadKey.INPUT] == "go to the table"
     assert message.modality == Intent.MODALITY_SPEECH
     assert message.priority == 128
 

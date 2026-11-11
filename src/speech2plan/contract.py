@@ -19,14 +19,13 @@ class IntentName(StrEnum):
 
 
 class ThematicRole(StrEnum):
-    """Keys of the Intent `data` object."""
+    """The roles of the Intent `data` object a task of the mission fills."""
 
-    AGENT = "agent"
     OBJECT = "object"
+    """What the robot brings."""
+
     GOAL = "goal"
-    RECIPIENT = "recipient"
-    INPUT = "input"
-    LOCALE = "locale"
+    """Where the robot goes, or brings the object to."""
 
 
 PLACE_ROLES: Tuple[ThematicRole, ...] = (ThematicRole.GOAL,)
@@ -48,13 +47,10 @@ class Qualifier:
 
 
 class SpatialRelation(StrEnum):
-    """How an entity is placed relative to another one."""
-
-    ON = "on"
-    """Rests on the other, as a bed on a floor."""
+    """How a place lies relative to another one."""
 
     IN = "in"
-    """Lies inside the other, as a bed in a patient room."""
+    """Lies inside a room, as a bed in a patient room."""
 
 
 @dataclass

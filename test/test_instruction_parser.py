@@ -194,8 +194,8 @@ def test_a_confidence_for_no_role_is_a_problem(vocabulary):
     ]
 
 
-def test_a_reference_may_be_placed_in_turn(vocabulary):
-    side_table_in_the_patient_room_downstairs = {
+def test_a_room_relating_in_turn_is_returned(vocabulary):
+    bedroom_in_a_kitchen = {
         "entity_type": "SideTable",
         "relations": [
             {
@@ -209,26 +209,9 @@ def test_a_reference_may_be_placed_in_turn(vocabulary):
             }
         ],
     }
-    parser = InstructionParser(
-        model=FakeModel(reply=reply(goal=side_table_in_the_patient_room_downstairs)),
-        vocabulary=vocabulary,
-    )
-    constraint = parser.parse("go to the side table").constraint_for(ThematicRole.GOAL)
-    assert constraint.notation() == "SideTable in (Bedroom in Kitchen)"
-    assert len(parser.model.requests) == 1
-
-
-def test_relations_nest_two_deep_at_most(vocabulary):
-    deepest = {"entity_type": "Kitchen"}
-    for entity_type in ("Table", "Sofa", "CoffeeTable"):
-        deepest = {
-            "entity_type": entity_type,
-            "relations": [{"relation": "in", "reference": deepest}],
-        }
     problems = InstructionParser(model=None, vocabulary=vocabulary).problems_with(
-        json.loads(reply(goal=deepest))
+        json.loads(reply(goal=bedroom_in_a_kitchen))
     )
     assert problems == [
-        "roles.goal.relations[0].reference.relations[0].reference relates too "
-        "deep; relations nest at most 2 deep"
+        "roles.goal.relations[0].reference relates a room; only places lie in rooms"
     ]

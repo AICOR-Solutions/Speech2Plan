@@ -74,11 +74,8 @@ class InstructionParser:
     maximum_attempts: int = field(kw_only=True, default=2)
     """How many replies may break the rules before the utterance is given up."""
 
-    nesting: int = field(kw_only=True, default=2)
-    """How deep relations may nest: the cloth in the cabinet in the bathroom."""
-
     spoken_qualifiers: Tuple[QualifierAttribute, ...] = field(
-        kw_only=True, default=(QualifierAttribute.FLOOR,)
+        kw_only=True, default=(QualifierAttribute.FLOOR, QualifierAttribute.NUMBER)
     )
     """The qualifiers the model may state. Rooms are references of an `in`
     relation, and names are for the dialogue to pin an answer with."""
@@ -177,7 +174,7 @@ class InstructionParser:
 
     def reply_schema(self) -> dict:
         """The shape of a reply, with the vocabulary built into the enums."""
-        constraint = self.constraint_schema(nesting=self.nesting)
+        constraint = self.constraint_schema(may_relate=True)
         constraint["type"] = ["object", "null"]
         return {
             "type": "object",
@@ -228,8 +225,9 @@ class InstructionParser:
             "additionalProperties": False,
         }
 
-    def constraint_schema(self, nesting: int) -> dict:
-        """One entity description, whose references relate `nesting - 1` deep."""
+    def constraint_schema(self, may_relate: bool) -> dict:
+        """One place description, which `may_relate` to a room described in turn,
+        though that room relates to nothing."""
         properties = {
             str(ReplyKey.ENTITY_TYPE): {
                 "type": ["string", "null"],
@@ -238,7 +236,7 @@ class InstructionParser:
             str(ReplyKey.QUALIFIERS): self.qualifiers_schema(),
             str(ReplyKey.SPOKEN_FORM): {"type": ["string", "null"]},
         }
-        if nesting > 0:
+        if may_relate:
             properties[str(ReplyKey.RELATIONS)] = {
                 "type": "array",
                 "items": {
@@ -249,7 +247,7 @@ class InstructionParser:
                             "enum": [str(r) for r in self.vocabulary.relations],
                         },
                         str(ReplyKey.REFERENCE): self.constraint_schema(
-                            nesting=nesting - 1
+                            may_relate=False
                         ),
                     },
                     "required": [str(ReplyKey.RELATION), str(ReplyKey.REFERENCE)],
@@ -267,9 +265,20 @@ class InstructionParser:
         """The types of the places of the world."""
         return self.vocabulary.entity_types
 
+    def qualifier_values(self) -> dict:
+        """What each qualifier may name: the floors and numbers the world has."""
+        return {
+            QualifierAttribute.FLOOR: self.vocabulary.floors,
+            QualifierAttribute.NUMBER: self.vocabulary.numbers,
+        }
+
     def qualifiers_schema(self) -> dict:
-        """The qualifiers, which may only name a floor the world has."""
-        if not self.vocabulary.floors:
+        """The qualifiers, which may only name a floor or a number the world has."""
+        values = self.qualifier_values()
+        attributes = [
+            attribute for attribute in self.spoken_qualifiers if values.get(attribute)
+        ]
+        if not attributes:
             return {"type": "array", "maxItems": 0}
         return {
             "type": "array",
@@ -278,13 +287,13 @@ class InstructionParser:
                 "properties": {
                     str(ReplyKey.ATTRIBUTE): {
                         "type": "string",
-                        "enum": [
-                            str(attribute) for attribute in self.spoken_qualifiers
-                        ],
+                        "enum": [str(attribute) for attribute in attributes],
                     },
                     str(ReplyKey.VALUE): {
                         "type": "string",
-                        "enum": self.vocabulary.floors,
+                        "enum": [
+                            value for attribute in attributes for value in values[attribute]
+                        ],
                     },
                 },
                 "required": [str(ReplyKey.ATTRIBUTE), str(ReplyKey.VALUE)],
@@ -349,11 +358,10 @@ class InstructionParser:
         return []
 
     def constraint_problems(
-        self, path: str, payload: object, nesting: Optional[int] = None
+        self, path: str, payload: object, may_relate: bool = True
     ) -> List[str]:
-        """What is wrong with one entity description, whose references may relate
-        `nesting` deep, as deep as the parser allows unless given."""
-        nesting = self.nesting if nesting is None else nesting
+        """What is wrong with one place description, which `may_relate` to a room
+        unless it describes that room itself."""
         if not isinstance(payload, dict):
             return [f"{path} must be an object or null"]
         problems = []
@@ -380,17 +388,16 @@ class InstructionParser:
                     f"{[str(a) for a in self.spoken_qualifiers]} exist, and a room is "
                     "the reference of an 'in' relation"
                 )
-            elif value not in self.vocabulary.floors:
+            elif value not in self.qualifier_values()[attribute]:
+                known = self.qualifier_values()[attribute]
                 problems.append(
-                    f"{path} names floor {value!r}; the floors are "
-                    f"{self.vocabulary.floors}"
+                    f"{path} names {attribute} {value!r}; the {attribute}s are "
+                    f"{known if len(known) <= 12 else 'the ones listed'}"
                 )
-        if relations and nesting <= 0:
-            problems.append(
-                f"{path} relates too deep; relations nest at most {self.nesting} deep"
-            )
+        if relations and not may_relate:
+            problems.append(f"{path} relates a room; only places lie in rooms")
         relation_names = [str(relation) for relation in self.vocabulary.relations]
-        for index, relation in enumerate(relations if nesting > 0 else []):
+        for index, relation in enumerate(relations if may_relate else []):
             if not isinstance(relation, dict):
                 problems.append(f"{path}.relations[{index}] is no object")
                 continue
@@ -403,7 +410,7 @@ class InstructionParser:
                 self.constraint_problems(
                     f"{path}.relations[{index}].reference",
                     relation.get(ReplyKey.REFERENCE),
-                    nesting=nesting - 1,
+                    may_relate=False,
                 )
             )
         return problems

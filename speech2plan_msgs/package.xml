@@ -57,7 +57,8 @@
         version: 1.0.0
         description: |
           Ask the people around the robot a question they answer with yes or no:
-          to load or unload the tray, or whether to try a failed step again.
+          to load or unload the tray, whether it may board the elevator with them,
+          or whether to try a failed step again.
         interface: action
         default_interface_path: /skill/ask_for_help
         datatype: speech2plan_msgs/action/AskForHelp
@@ -72,7 +73,7 @@
             - name: problem
               type: string
               required: true
-              description: load_tray, unload_tray or step_failed.
+              description: load_tray, unload_tray, board_elevator or step_failed.
             - name: person_id
               type: string
               default: ""

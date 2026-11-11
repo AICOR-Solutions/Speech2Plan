@@ -406,9 +406,13 @@ def test_a_world_change_is_applied_before_the_next_parse(ros):
     node.parser.vocabulary = Vocabulary.from_world(world)
     node.world_synchronizer = BufferedWorldChange(world=world)
 
-    tables_before = node.parser.vocabulary.count_of("Table")
+    types_before = node.parser.vocabulary.entity_types
 
     utter(node, "bring the cup to the kitchen")
 
-    assert node.parser.vocabulary.count_of("Table") == tables_before + 1
+    assert node.parser.vocabulary.entity_types == types_before
+    tables = next(
+        entry for entry in node.parser.vocabulary.types if entry.entity_type == "Table"
+    )
+    assert tables.count == 2
     node.destroy_node()

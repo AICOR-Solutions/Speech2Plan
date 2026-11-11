@@ -66,8 +66,5 @@ def test_every_offered_description_singles_out_its_instance(care_ward):
             assert len(matched) == len(shared), place.notation()
 
 
-def test_types_alone_are_counted_without_describing_instances(care_ward):
-    vocabulary = Vocabulary.from_world(care_ward, describe_instances=False)
-    assert vocabulary.count_of("Table") == 2
-    assert entry(vocabulary, "Table").places == []
-    assert entry(vocabulary, "Table").render() == "- Table (2)"
+def test_a_type_is_counted(care_ward):
+    assert entry(Vocabulary.from_world(care_ward), "Table").count == 2

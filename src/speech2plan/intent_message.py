@@ -26,6 +26,12 @@ class PayloadKey(StrEnum):
     The keys of each constraint are the fields of SemanticConstraint.
     """
 
+    INPUT = "input"
+    """The utterance, as REP-155 names it."""
+
+    LOCALE = "locale"
+    """The language of the utterance, as REP-155 names it."""
+
     OTHER_DATA = "other_data"
     CONSTRAINTS = "constraints"
 
@@ -131,9 +137,9 @@ class PublishedIntent:
         item = bare_noun(self.instruction.item, self.determiners)
         if item:
             data[str(ThematicRole.OBJECT)] = item
-        data[str(ThematicRole.INPUT)] = self.instruction.utterance
+        data[str(PayloadKey.INPUT)] = self.instruction.utterance
         if self.instruction.locale:
-            data[str(ThematicRole.LOCALE)] = self.instruction.locale
+            data[str(PayloadKey.LOCALE)] = self.instruction.locale
         data[str(PayloadKey.OTHER_DATA)] = {
             str(PayloadKey.CONSTRAINTS): [
                 constraint.as_dict() for constraint in constraints

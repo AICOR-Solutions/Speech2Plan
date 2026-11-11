@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-import json
 import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Dict, List
 
-from communication_skills.action import Ask, Say
+from communication_skills.action import Say
 from hri_actions_msgs.msg import Intent
 from hri_msgs.msg import IdsList, LiveSpeech
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
+from rclpy.task import Future
 from std_skills.msg import Meta
 
 from speech2plan.dialogue import DialogueSkills, Question
@@ -25,7 +25,6 @@ class SkillPath(StrEnum):
     """Where the ROS4HRI communication skills live."""
 
     SAY = "/skill/say"
-    ASK = "/skill/ask"
 
 
 class HumansTopic(StrEnum):
@@ -38,106 +37,45 @@ class HumansTopic(StrEnum):
     VOICE_OF_PERSON = "/humans/persons/{person_id}/voice_id"
 
 
-# %% client
+# %% waiting on ROS
+
+
+def completes(future: Future, timeout_seconds: float) -> bool:
+    """Whether `future` completes within `timeout_seconds`, completed by an executor
+    on another thread."""
+    done = threading.Event()
+    future.add_done_callback(lambda _: done.set())
+    return done.wait(timeout=timeout_seconds)
+
+
+# %% speaking and listening
 
 
 @dataclass
-class Ros4HriDialogueSkills(DialogueSkills):
-    """Calls the ROS4HRI say and ask skills."""
+class SpokenAnswerSkills(DialogueSkills):
+    """Says through the ROS4HRI `say` skill, and takes the next sentence a tracked
+    voice speaks as the answer to a question.
+
+    TIAGo's `ask` skill is not used: its only chatbot, Rasa, cannot fill an answer
+    schema. A yes or no question is answered by the words of that sentence, any
+    other question by the sentence itself.
+    """
 
     node: Node = field(kw_only=True)
     priority: int = field(kw_only=True, default=Meta.NORMAL_PRIORITY)
     timeout_seconds: float = field(kw_only=True, default=10.0)
-    """How long to wait for a skill server before giving up on it."""
+    """How long to wait for the say skill to be there."""
 
     answer_timeout_seconds: float = field(kw_only=True, default=120.0)
-    """How long to wait for a person to answer."""
-
-    def __post_init__(self):
-        group = ReentrantCallbackGroup()
-        self.say_client = ActionClient(
-            self.node, Say, SkillPath.SAY, callback_group=group
-        )
-        self.ask_client = ActionClient(
-            self.node, Ask, SkillPath.ASK, callback_group=group
-        )
-
-    def meta(self) -> Meta:
-        """The call metadata every skill goal carries."""
-        meta = Meta()
-        meta.caller = self.node.get_name()
-        meta.priority = self.priority
-        return meta
-
-    def addressee(self, person_id: str) -> str:
-        """The skill's person id, empty for whoever is there."""
-        return "" if person_id == Intent.UNKNOWN_AGENT else person_id
-
-    def say(self, text: str, person_id: str) -> None:
-        goal = Say.Goal()
-        goal.meta = self.meta()
-        goal.person_id = self.addressee(person_id)
-        goal.input = text
-        self.send(self.say_client, goal, SkillPath.SAY)
-
-    def ask(self, question: Question) -> Dict[str, object]:
-        goal = Ask.Goal()
-        goal.meta = self.meta()
-        goal.person_id = self.addressee(question.person_id)
-        goal.question = question.text
-        goal.answers_schema = json.dumps(question.answers_schema)
-        result = self.send(self.ask_client, goal, SkillPath.ASK)
-        return json.loads(result.answers)
-
-    def send(self, client: ActionClient, goal, path: str):
-        """Send a goal and wait for its result.
-
-        The waiting is explicit rather than `send_goal`, because this runs in a
-        subscription callback and must not spin the node it is called from.
-        """
-        if not client.wait_for_server(timeout_sec=self.timeout_seconds):
-            raise SkillCallFailed(skill=path, reason="no action server")
-        handle = self.wait_for(client.send_goal_async(goal), path)
-        if not handle.accepted:
-            raise SkillCallFailed(skill=path, reason="goal rejected")
-        result = handle.get_result_async()
-        if not self.completes(result):
-            handle.cancel_goal_async()
-            raise SkillCallFailed(skill=path, reason="no result in time")
-        return result.result().result
-
-    def wait_for(self, future, path: str):
-        """The result of a future that the executor completes on another thread."""
-        if not self.completes(future):
-            future.cancel()
-            raise SkillCallFailed(skill=path, reason="no result in time")
-        return future.result()
-
-    def completes(self, future) -> bool:
-        """Whether `future` completes within the answer timeout."""
-        done = threading.Event()
-        future.add_done_callback(lambda _: done.set())
-        return done.wait(timeout=self.answer_timeout_seconds)
-
-
-# %% answers read from speech
-
-
-@dataclass
-class SpokenAnswerSkills(Ros4HriDialogueSkills):
-    """Asks through the say skill and takes the next sentence a tracked voice speaks
-    as the answer.
-
-    Stands in for an ask skill whose chatbot cannot fill an answer schema, as on
-    TIAGo with Rasa. A yes or no question is answered by the words of that sentence,
-    any other question by the sentence itself.
-    """
+    """How long to wait for a sentence to be said, or a person to answer."""
 
     words: Words = field(kw_only=True, default_factory=lambda: default_settings().words)
     """Which sentences are filler, and which words say yes or no."""
 
     def __post_init__(self):
-        super().__post_init__()
+        self.say_client = ActionClient(
+            self.node, Say, SkillPath.SAY, callback_group=ReentrantCallbackGroup()
+        )
         self.speech_group = ReentrantCallbackGroup()
         self.speech_subscriptions: Dict[str, object] = {}
         self.listening = False
@@ -152,6 +90,34 @@ class SpokenAnswerSkills(Ros4HriDialogueSkills):
             10,
             callback_group=self.speech_group,
         )
+
+    # %% saying
+
+    def say(self, text: str, person_id: str) -> None:
+        """Say `text` to `person_id`, and wait until it is said.
+
+        Waiting is explicit rather than `send_goal`, because this runs in a
+        subscription callback and must not spin the node it is called from.
+        """
+        if not self.say_client.wait_for_server(timeout_sec=self.timeout_seconds):
+            raise SkillCallFailed(skill=SkillPath.SAY, reason="no action server")
+        goal = Say.Goal()
+        goal.meta.caller = self.node.get_name()
+        goal.meta.priority = self.priority
+        goal.person_id = "" if person_id == Intent.UNKNOWN_AGENT else person_id
+        goal.input = text
+        sent = self.say_client.send_goal_async(goal)
+        if not completes(sent, self.answer_timeout_seconds):
+            sent.cancel()
+            raise SkillCallFailed(skill=SkillPath.SAY, reason="no answer in time")
+        handle = sent.result()
+        if not handle.accepted:
+            raise SkillCallFailed(skill=SkillPath.SAY, reason="goal rejected")
+        if not completes(handle.get_result_async(), self.answer_timeout_seconds):
+            handle.cancel_goal_async()
+            raise SkillCallFailed(skill=SkillPath.SAY, reason="no result in time")
+
+    # %% listening
 
     def follow_voices(self, tracked: IdsList) -> None:
         """Listen to every voice ROS4HRI tracks."""

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Drive the node through a full dialogue on the local graph, with no robot.
 
-Runs the node, a stand-in for the robot's communication skills, and a probe that
-plays the ROS4HRI side, one tracked person, one voice, one utterance, and the plan
-executive, taking the task the node submits. With no
+Runs the node, a stand-in for the robot's say skill, and a probe that plays the
+ROS4HRI side, one tracked person, one voice, one utterance and the answers to the
+robot's questions, and the plan executive, taking the task the node submits. With no
 argument the parse is canned, so nothing calls a model; with an utterance the
 real parser runs.
 """
@@ -15,14 +15,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import json
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Callable, List, Optional
 
 import rclpy
-from communication_skills.action import Ask, Say
+from communication_skills.action import Say
 from hri_msgs.msg import IdsList, LiveSpeech
 from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -46,13 +45,13 @@ from speech2plan.contract import (
     RoleConfidence,
     ThematicRole,
 )
-from speech2plan.dialogue import AnswerKey, Clarifier
+from speech2plan.dialogue import Clarifier
 from speech2plan.grounding import Grounder
 from speech2plan.ros.intent_node import Speech2PlanNode
 from speech2plan.ros.skill_client import (
     HumansTopic,
-    Ros4HriDialogueSkills,
     SkillPath,
+    SpokenAnswerSkills,
 )
 from speech2plan.ros.task_submission import TaskSkillPath
 from speech2plan.world_source import PrototypeWard
@@ -61,46 +60,27 @@ from speech2plan.world_source import PrototypeWard
 
 
 class SkillServer(Node):
-    """Serves /skill/say and /skill/ask from a script of answers."""
+    """Serves /skill/say, and answers each question the robot says, in turn, by
+    speaking as the person would once the robot listens."""
 
-    def __init__(self, answers: Optional[Dict[str, object]] = None):
-        super().__init__("fake_communication_skills")
-        self.answers = answers or {
-            "object": "the cup",
-            "goal": "first floor",
-            str(AnswerKey.CONFIRMED): True,
-        }
-        """What the stand-in person answers, by the key the question asks for."""
+    def __init__(self, speak: Callable[[str], None], answers: Optional[List[str]] = None):
+        super().__init__("fake_say_skill")
+        self.speak = speak
+        self.answers = answers or ["yes"]
+        """What the person answers, in turn; the last one again once the rest are said."""
 
-        group = ReentrantCallbackGroup()
-        ActionServer(self, Say, SkillPath.SAY, self.on_say, callback_group=group)
-        ActionServer(self, Ask, SkillPath.ASK, self.on_ask, callback_group=group)
-
-    def pick(self, offered: list, hint):
-        """The offered option the person's words single out, or the answer itself."""
-        for option in offered:
-            if hint in option:
-                return option
-        return hint
+        ActionServer(
+            self, Say, SkillPath.SAY, self.on_say, callback_group=ReentrantCallbackGroup()
+        )
 
     def on_say(self, goal):
-        print(f"robot : {goal.request.input}")
+        text = goal.request.input
+        print(f"robot : {text}")
+        if text.endswith("?"):
+            answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+            threading.Timer(0.5, self.speak, args=[answer]).start()
         goal.succeed()
         return Say.Result()
-
-    def on_ask(self, goal):
-        print(f"robot : {goal.request.question}")
-        requested = json.loads(goal.request.answers_schema)
-        answered = {
-            key: self.pick(schema.get("enum", []), self.answers[key])
-            for key, schema in requested.items()
-            if key in self.answers
-        }
-        print(f"person: {answered}")
-        goal.succeed()
-        result = Ask.Result()
-        result.answers = json.dumps(answered)
-        return result
 
 
 # %% the ROS4HRI side
@@ -219,11 +199,9 @@ def main() -> None:
 
     rclpy.init()
     node = Speech2PlanNode(parser=build_parser(utterance, world), grounder=grounder)
-    node.clarifier = Clarifier(
-        skills=Ros4HriDialogueSkills(node=node), grounder=grounder
-    )
-    server = SkillServer()
+    node.clarifier = Clarifier(skills=SpokenAnswerSkills(node=node), grounder=grounder)
     probe = Probe()
+    server = SkillServer(speak=probe.utter)
 
     executor = MultiThreadedExecutor()
     for member in (node, server, probe):

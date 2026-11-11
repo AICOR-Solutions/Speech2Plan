@@ -12,9 +12,11 @@ from speech2plan.contract import (
     ThematicRole,
 )
 from speech2plan.description import EntityDescriber
-from speech2plan.grounding import Grounder, NoAssumption
+from speech2plan.grounding import Grounder
 from speech2plan.placement import QualifierAttribute
 from speech2plan.world_source import PrototypeWard
+
+from .fake_preference import NoAssumption
 
 # %% fixtures
 

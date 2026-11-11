@@ -5,7 +5,6 @@ import pytest
 from speech2plan.contract import IntentName, ThematicRole
 from speech2plan.parsing.instruction_parser import InstructionParser, ReplyKey
 from speech2plan.vocabulary import TypeEntry, Vocabulary
-from speech2plan.world_source import ElevatorBuilding
 
 # %% fixtures
 
@@ -49,12 +48,6 @@ def test_every_role_is_offered(parser):
     }
 
 
-def test_only_places_are_offered():
-    vocabulary = Vocabulary.from_world(ElevatorBuilding(robot_type=None).load())
-    assert "Handle" not in vocabulary.entity_types
-    assert "Cup" not in vocabulary.entity_types
-
-
 def role_schema(parser, role: ThematicRole) -> dict:
     return parser.reply_schema()["properties"][str(ReplyKey.ROLES)]["properties"][
         str(role)
@@ -80,15 +73,12 @@ def test_a_qualifier_may_only_name_a_floor_of_the_world(parser):
     ]
 
 
-def test_a_reference_relates_once_more(parser):
+def test_a_place_lies_in_a_room_that_relates_to_nothing(parser):
     relation = goal_schema(parser)["properties"][str(ReplyKey.RELATIONS)]["items"]
-    assert relation["properties"][str(ReplyKey.RELATION)]["enum"] == ["on", "in"]
+    assert relation["properties"][str(ReplyKey.RELATION)]["enum"] == ["in"]
     reference = relation["properties"][str(ReplyKey.REFERENCE)]
     assert reference["type"] == "object"
-    deeper = reference["properties"][str(ReplyKey.RELATIONS)]["items"]["properties"][
-        str(ReplyKey.REFERENCE)
-    ]
-    assert str(ReplyKey.RELATIONS) not in deeper["properties"]
+    assert str(ReplyKey.RELATIONS) not in reference["properties"]
 
 
 def test_a_world_without_floors_allows_no_qualifier():
