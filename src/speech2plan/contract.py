@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from hri_actions_msgs.msg import Intent
 
@@ -10,14 +10,12 @@ from hri_actions_msgs.msg import Intent
 
 
 class IntentName(StrEnum):
-    """The subset of hri_actions_msgs/Intent that Speech2Plan recognises."""
+    """The subset of hri_actions_msgs/Intent that Speech2Plan recognises: the tasks of
+    the medicine-transport mission, and what is said without one."""
 
     RAW_USER_INPUT = Intent.RAW_USER_INPUT
     MOVE_TO = Intent.MOVE_TO
-    GUIDE = Intent.GUIDE
-    GRAB_OBJECT = Intent.GRAB_OBJECT
     BRING_OBJECT = Intent.BRING_OBJECT
-    PLACE_OBJECT = Intent.PLACE_OBJECT
 
 
 class ThematicRole(StrEnum):
@@ -31,6 +29,13 @@ class ThematicRole(StrEnum):
     LOCALE = "locale"
 
 
+PLACE_ROLES: Tuple[ThematicRole, ...] = (ThematicRole.GOAL,)
+"""The roles that name a place of the world, which are grounded in the twin.
+
+What the robot carries is not looked for: people put it on the tray and take it off,
+so the `object` role is only the speaker's words for it, the item."""
+
+
 # %% entity references
 
 
@@ -42,22 +47,14 @@ class Qualifier:
     value: str = field(kw_only=True)
 
 
-class GenericType(StrEnum):
-    """Entity types that name no type of the world."""
-
-    THING = "Thing"
-    """A thing the speaker leaves unnamed, as in 'the thing on the sofa', which any
-    movable thing fits."""
-
-
 class SpatialRelation(StrEnum):
     """How an entity is placed relative to another one."""
 
     ON = "on"
-    """Rests on the other, as a cup on a table."""
+    """Rests on the other, as a bed on a floor."""
 
     IN = "in"
-    """Lies inside the other, a room or a container such as a cabinet."""
+    """Lies inside the other, as a bed in a patient room."""
 
 
 @dataclass
@@ -76,7 +73,7 @@ class EntityConstraint:
 
     def notation(self) -> str:
         """The constraint in the compact form the model reads, as in
-        `Cup on Table in (Kitchen floor=GroundFloor)`."""
+        `SideTable in (Bedroom floor=GroundFloor)`."""
         return " ".join([self.entity_type or "?", *self.place_notation()]).strip()
 
     def place_notation(self) -> List[str]:
@@ -146,6 +143,17 @@ class ParsedInstruction:
             [self.intent_confidence]
             + [scored.confidence for scored in self.confidence_per_role]
         )
+
+    @property
+    def item(self) -> Optional[str]:
+        """The speaker's words for what the robot carries, None when unfilled."""
+        constraint = self.constraint_for(ThematicRole.OBJECT)
+        return None if constraint is None else constraint.spoken_form
+
+    @property
+    def places(self) -> List[RoleBinding]:
+        """The roles that name a place of the world."""
+        return [binding for binding in self.roles if binding.role in PLACE_ROLES]
 
     def constraint_for(self, role: ThematicRole) -> Optional[EntityConstraint]:
         """The constraint filling `role`, or None when it is unfilled."""

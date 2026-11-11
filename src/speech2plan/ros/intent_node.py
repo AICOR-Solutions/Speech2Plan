@@ -11,7 +11,6 @@ from hri import HRIListener, Voice
 from hri_actions_msgs.msg import Intent
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
-from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from semantic_digital_twin.adapters.ros.world_synchronizer import WorldSynchronizer
 
 from speech2plan.contract import IntentName, ParsedInstruction
@@ -24,15 +23,16 @@ from speech2plan.exceptions import (
 from speech2plan.grounding import Grounder
 from speech2plan.intent_message import PublishedIntent
 from speech2plan.parsing.instruction_parser import InstructionParser
+from speech2plan.ros.task_submission import TaskSubmission
 from speech2plan.settings import Words, default_settings
 
-# %% topic names
+# %% what the node says about handing a task on
 
 
-class Topic(StrEnum):
-    """What this node publishes. The ROS4HRI topics belong to `HRIListener`."""
+class SubmissionNotice(StrEnum):
+    """What the robot says when the task the speaker confirmed is not taken on."""
 
-    INTENTS = "/intents"
+    NOT_TAKEN = "I cannot take on that task right now."
 
 
 # %% node
@@ -43,9 +43,8 @@ class IntentNodeConfiguration:
     """Settings that change how the node behaves."""
 
     minimum_confidence: float = field(kw_only=True, default=0.0)
-    queue_depth: int = field(kw_only=True, default=10)
     priority: int = field(kw_only=True, default=128)
-    """The priority every published intent carries."""
+    """The priority every submitted intent carries."""
 
     humans_period_seconds: float = field(kw_only=True, default=0.05)
     """How often the ROS4HRI graph is read."""
@@ -55,7 +54,8 @@ class IntentNodeConfiguration:
 
 
 class Speech2PlanNode(Node):
-    """Publishes hri_actions_msgs/Intent for what a tracked person says."""
+    """Hands the plan executive an hri_actions_msgs/Intent for what a tracked person
+    says, as a `CarryOutIntent` goal."""
 
     def __init__(
         self,
@@ -75,14 +75,8 @@ class Speech2PlanNode(Node):
         self.handling_instruction = threading.Lock()
         """Held from parsing an instruction until its dialogue ends."""
 
-        self.intent_publisher = self.create_publisher(
-            Intent,
-            str(Topic.INTENTS),
-            QoSProfile(
-                depth=self.configuration.queue_depth,
-                history=HistoryPolicy.KEEP_LAST,
-                reliability=ReliabilityPolicy.RELIABLE,
-            ),
+        self.task_submission = TaskSubmission(
+            node=self, priority=self.configuration.priority
         )
         self.listener = listener or HRIListener(
             f"{self.get_name()}_hri_listener", False
@@ -150,7 +144,7 @@ class Speech2PlanNode(Node):
             self.handling_instruction.release()
 
     def handle_instruction(self, voice: Voice, utterance: str) -> None:
-        """Parse an utterance, clarify it, and publish it as an intent."""
+        """Parse an utterance, clarify it, and hand it to the plan executive."""
         self.follow_world()
         speaker = self.speaker_of(voice)
         try:
@@ -171,14 +165,27 @@ class Speech2PlanNode(Node):
         if clarification is None:
             self.get_logger().info(f"'{utterance}' was withdrawn")
             return
-        self.intent_publisher.publish(
-            PublishedIntent(
-                instruction=clarification.instruction,
-                outcomes=clarification.outcomes,
-                priority=self.configuration.priority,
-            ).as_message()
-        )
+        intent = PublishedIntent(
+            instruction=clarification.instruction,
+            outcomes=clarification.outcomes,
+            priority=self.configuration.priority,
+        ).as_message()
+        try:
+            self.task_submission.submit(intent)
+        except SkillCallFailed as failure:
+            self.get_logger().error(f"nobody carries out '{utterance}': {failure}")
+            self.tell(clarification.instruction.speaker, SubmissionNotice.NOT_TAKEN)
+            return
         self.get_logger().info(f"{speaker} said '{utterance}' -> {instruction.intent}")
+
+    def tell(self, person_id: str, text: str) -> None:
+        """Say `text` to `person_id`, if the node can speak at all."""
+        if self.clarifier is None:
+            return
+        try:
+            self.clarifier.skills.say(str(text), person_id)
+        except SkillCallFailed as failure:
+            self.get_logger().error(f"could not say '{text}': {failure}")
 
     def clarify(self, instruction: ParsedInstruction) -> Optional[Clarification]:
         """Run the dialogue, or ground in silence when there is no clarifier.
@@ -201,23 +208,18 @@ class Speech2PlanNode(Node):
 
 
 def main(arguments: Optional[list] = None) -> None:
-    """Run the node against a fetched world, falling back to the care ward.
-
-    With `-p query_world:=true` the model is told only the types of the world and
-    queries it for the rest.
-    """
+    """Run the node against a fetched world, falling back to the care ward."""
     from rclpy.executors import MultiThreadedExecutor
 
     from speech2plan.parsing.answer_interpreter import AnswerInterpreter
     from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
-    from speech2plan.parsing.querying_parser import QueryingInstructionParser
     from speech2plan.ros.fetched_world import FetchedWorld
+    from speech2plan.ros.help_requests import HelpRequests
     from speech2plan.ros.skill_client import SpokenAnswerSkills
     from speech2plan.world_source import CareWard
 
     rclpy.init(args=arguments)
     bootstrap = rclpy.create_node("speech2plan_world_fetch")
-    query_world = bootstrap.declare_parameter("query_world", False).value
     fetched = FetchedWorld(node=bootstrap)
     is_shared = fetched.is_available()
     world = fetched.load() if is_shared else CareWard().load()
@@ -225,8 +227,7 @@ def main(arguments: Optional[list] = None) -> None:
 
     model = ClaudeCommandLineModel()
     grounder = Grounder(world=world)
-    parser_type = QueryingInstructionParser if query_world else InstructionParser
-    parser = parser_type.for_world(world, model, grounder=grounder)
+    parser = InstructionParser.for_world(world, model)
     node = Speech2PlanNode(parser=parser, grounder=grounder)
     if is_shared:
         node.world_synchronizer = WorldSynchronizer(
@@ -236,6 +237,9 @@ def main(arguments: Optional[list] = None) -> None:
         skills=SpokenAnswerSkills(node=node),
         grounder=grounder,
         interpreter=AnswerInterpreter(model=model),
+    )
+    node.help_requests = HelpRequests(
+        node=node, skills=node.clarifier.skills, dialogue=node.handling_instruction
     )
     executor = MultiThreadedExecutor()
     executor.add_node(node)

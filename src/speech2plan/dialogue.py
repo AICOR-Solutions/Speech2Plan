@@ -5,24 +5,14 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Dict, List, Optional, Set
 
-from semantic_digital_twin.semantic_annotations.mixins import (
-    HasCaseAsRootBody,
-    HasSupportingSurface,
-)
-from semantic_digital_twin.semantic_annotations.semantic_annotations import (
-    Furniture,
-    Room,
-)
 from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
 
 from speech2plan.contract import (
     EntityConstraint,
     ParsedInstruction,
     Qualifier,
-    Relation,
     RoleBinding,
     RoleConfidence,
-    SpatialRelation,
     ThematicRole,
 )
 from speech2plan.belief import BeliefReport
@@ -30,7 +20,6 @@ from speech2plan.description import (
     EntityDescriber,
     definite,
     indefinite,
-    is_plural,
 )
 from speech2plan.grounding import (
     Ambiguity,
@@ -57,10 +46,7 @@ class SpokenTask(StrEnum):
 
     RAW_USER_INPUT = "do what you asked for"
     MOVE_TO = "go to {goal}"
-    GUIDE = "guide {recipient} to {goal}"
-    GRAB_OBJECT = "pick up {object}"
     BRING_OBJECT = "bring {object} to {goal}"
-    PLACE_OBJECT = "put {object} down at {goal}"
 
 
 class OpenRole(StrEnum):
@@ -102,10 +88,8 @@ class Question:
     """The entity behind each offered option, by the words it was offered in."""
 
     candidates: List[str] = field(kw_only=True, default_factory=list)
-    """Every entity an answer may name to fill the role."""
-
-    places: List[str] = field(kw_only=True, default_factory=list)
-    """Every entity an answer may name as where the role's entity is."""
+    """Every entity an answer may name to fill the role; none for the item, which an
+    answer names in words."""
 
     topic: Optional[str] = field(kw_only=True, default=None)
     """What the question is about, so it is put once however its words change.
@@ -301,50 +285,38 @@ class Clarifier:
     def question_for_unmatched(
         self, outcome: Unmatched, person_id: str
     ) -> Optional[Question]:
-        """Where the thing the twin does not hold is, or which room was meant.
-
-        A thing can be anywhere, so the answer may name a place, which the robot
-        passes on without looking for it. A room is where it is, so the answer may
-        only name another one. Nothing is asked when no answer could name anything.
-        """
+        """Which place was meant, when the one described matched none: one of its
+        type, or any place where the twin holds none of that type."""
         known = self.grounder.entities_of_type(outcome.constraint.entity_type)
-        is_room = bool(known) and all(isinstance(entity, Room) for entity in known)
-        places = [] if is_room else [str(place.name) for place in self.places()]
-        if not known and not places:
-            return None
-        if is_room:
-            described = self.describer.describe_constraint(outcome.constraint)
+        described = self.describer.describe_constraint(outcome.constraint)
+        if known:
             text = f"I cannot find {described}. Which one do you mean?"
         else:
-            noun = self.describer.noun_of(outcome.constraint)
-            text = f"Where {'are' if is_plural(noun) else 'is'} {definite(noun)}?"
+            known = self.grounder.searchable_entities()
+            text = f"I do not know {described}. Which place do you mean?"
         return Question(
             text=text,
             answers_schema={str(outcome.role): {"type": "string"}},
             person_id=person_id,
             role=outcome.role,
             candidates=[str(entity.name) for entity in known],
-            places=places,
-            topic=f"where is the {outcome.role}",
+            topic=f"which {outcome.role}",
         )
 
-    def places(self) -> List[SemanticAnnotation]:
-        """Everything a thing can be in or on: rooms, furniture, surfaces."""
-        return [
-            entity
-            for entity in self.grounder.searchable_entities()
-            if isinstance(entity, (Room, Furniture, HasSupportingSurface))
-        ]
-
     def question_for_unfilled(self, role: ThematicRole, person_id: str) -> Question:
-        """A request for a role the speaker left open."""
+        """A request for a role the speaker left open: a place among the twin's, or
+        the item in words."""
         return Question(
             text=str(RoleQuestion[role.name]),
             answers_schema={str(role): {"type": "string"}},
             person_id=person_id,
-            candidates=[
-                str(entity.name) for entity in self.grounder.searchable_entities()
-            ],
+            candidates=(
+                []
+                if role == ThematicRole.OBJECT
+                else [
+                    str(entity.name) for entity in self.grounder.searchable_entities()
+                ]
+            ),
             role=role,
         )
 
@@ -378,17 +350,18 @@ class Clarifier:
     def apply(
         self, instruction: ParsedInstruction, answers: List[Answer]
     ) -> ParsedInstruction:
-        """The instruction with every answer that names an entity pinned to it, and
-        every answer that names a place added to where its role's entity is."""
+        """The instruction with the item an answer names in words, and with every
+        place an answer names pinned to its role."""
         clarified = instruction
         for answer in answers:
-            entity = self.entity_for(answer)
-            if entity is None:
+            role = answer.question.role
+            if role == ThematicRole.OBJECT:
+                item = EntityConstraint(entity_type=None, spoken_form=str(answer.value))
+                clarified = self.settled(clarified, role, item)
                 continue
-            if str(entity.name) in answer.question.candidates:
-                clarified = self.bind(clarified, answer.question.role, entity)
-            else:
-                clarified = self.locate(clarified, answer.question.role, entity)
+            entity = self.entity_for(answer)
+            if entity is not None and str(entity.name) in answer.question.candidates:
+                clarified = self.bind(clarified, role, entity)
         return clarified
 
     def choices_for(self, question: Question) -> Dict[str, SemanticAnnotation]:
@@ -401,8 +374,7 @@ class Clarifier:
         return {
             self.describer.describe(entity).phrase: entity
             for entity in (
-                self.grounder.entity_named(name)
-                for name in question.candidates + question.places
+                self.grounder.entity_named(name) for name in question.candidates
             )
             if entity is not None
         }
@@ -433,10 +405,20 @@ class Clarifier:
         """The instruction with `role` narrowed to one named entity."""
         spoken = instruction.constraint_for(role)
         pinned = self.pinned_to(entity, spoken.spoken_form if spoken else None)
+        return self.settled(instruction, role, pinned)
+
+    @staticmethod
+    def settled(
+        instruction: ParsedInstruction,
+        role: ThematicRole,
+        constraint: EntityConstraint,
+    ) -> ParsedInstruction:
+        """The instruction with `role` filled by `constraint`, which the speaker
+        settled."""
         return replace(
             instruction,
             roles=[binding for binding in instruction.roles if binding.role != role]
-            + [RoleBinding(role=role, constraint=pinned)],
+            + [RoleBinding(role=role, constraint=constraint)],
             unfilled_roles=[
                 unfilled for unfilled in instruction.unfilled_roles if unfilled != role
             ],
@@ -446,40 +428,6 @@ class Clarifier:
                 if scored.role != role
             ]
             + [RoleConfidence(role=role, confidence=1.0)],
-        )
-
-    def locate(
-        self,
-        instruction: ParsedInstruction,
-        role: ThematicRole,
-        place: SemanticAnnotation,
-    ) -> ParsedInstruction:
-        """The instruction with `role` placed where the speaker said it is.
-
-        What the speaker said about where it was before matched nothing, so it is
-        replaced, not narrowed.
-        """
-        spoken = instruction.constraint_for(role)
-        relation = (
-            SpatialRelation.IN
-            if isinstance(place, (Room, HasCaseAsRootBody))
-            else SpatialRelation.ON
-        )
-        located = EntityConstraint(
-            entity_type=spoken.entity_type,
-            relations=[Relation(relation=relation, reference=self.pinned_to(place))],
-            spoken_form=spoken.spoken_form,
-        )
-        return replace(
-            instruction,
-            roles=[
-                (
-                    binding
-                    if binding.role != role
-                    else RoleBinding(role=role, constraint=located)
-                )
-                for binding in instruction.roles
-            ],
         )
 
     @staticmethod

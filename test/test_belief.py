@@ -12,7 +12,7 @@ from speech2plan.contract import (
     ThematicRole,
 )
 from speech2plan.description import EntityDescriber
-from speech2plan.grounding import Grounder
+from speech2plan.grounding import Grounder, NoAssumption
 from speech2plan.placement import QualifierAttribute
 from speech2plan.world_source import PrototypeWard
 
@@ -32,39 +32,30 @@ def report(ward):
 
 
 def instruction_for(**constraint) -> ParsedInstruction:
-    """An instruction whose object role carries one constraint."""
+    """An instruction whose goal carries one constraint."""
     return ParsedInstruction(
-        utterance="take it",
+        utterance="go there",
         speaker="person_abc",
-        intent=IntentName.GRAB_OBJECT,
+        intent=IntentName.MOVE_TO,
         roles=[
-            RoleBinding(
-                role=ThematicRole.OBJECT, constraint=EntityConstraint(**constraint)
-            )
+            RoleBinding(role=ThematicRole.GOAL, constraint=EntityConstraint(**constraint))
         ],
         intent_confidence=0.9,
     )
 
 
-def sentences(report, ward, instruction) -> list:
-    return report.sentences(instruction, Grounder(world=ward).ground(instruction))
+def sentences(report, ward, instruction, preference=None) -> list:
+    grounder = Grounder(world=ward, preference=preference)
+    return report.sentences(instruction, grounder.ground(instruction))
 
 
 # %% what matched
 
 
 def test_candidates_are_reported_with_what_separates_them(report, ward):
-    assert sentences(report, ward, instruction_for(entity_type="Cup")) == [
-        "I know of 3 cups, 2 of them on this floor: "
-        "one in the kitchen on the ground floor "
-        "and one in the living room on the ground floor."
-    ]
-
-
-def test_namesakes_in_one_room_are_counted_and_placed(report, ward):
-    assert sentences(report, ward, instruction_for(entity_type="Plate")) == [
-        "I know of 2 plates, all in the kitchen on the ground floor."
-    ]
+    assert sentences(
+        report, ward, instruction_for(entity_type="Kitchen"), NoAssumption()
+    ) == ["I know of 2 kitchens: one on the ground floor and one on the first floor."]
 
 
 def test_many_candidates_are_only_counted(ward):
@@ -73,9 +64,9 @@ def test_many_candidates_are_only_counted(ward):
         describer=EntityDescriber(world=ward),
         most_entities=1,
     )
-    assert sentences(report, ward, instruction_for(entity_type="Cup")) == [
-        "I know of 3 cups, 2 of them on this floor."
-    ]
+    assert sentences(
+        report, ward, instruction_for(entity_type="Kitchen"), NoAssumption()
+    ) == ["I know of 2 kitchens."]
 
 
 def test_an_assumption_names_what_it_ruled_out(report, ward):
@@ -104,6 +95,6 @@ def test_a_resolved_role_adds_nothing(report, ward):
     assert sentences(report, ward, instruction_for(entity_type="Table")) == []
 
 
-def test_a_kind_of_thing_the_world_lacks_is_named_in_the_speakers_words(report, ward):
-    instruction = instruction_for(entity_type=None, spoken_form="the gloves")
-    assert sentences(report, ward, instruction) == ["I know of no gloves at all."]
+def test_a_kind_of_place_the_world_lacks_is_named_in_the_speakers_words(report, ward):
+    instruction = instruction_for(entity_type=None, spoken_form="the pharmacy")
+    assert sentences(report, ward, instruction) == ["I know of no pharmacy at all."]

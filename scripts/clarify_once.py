@@ -12,12 +12,13 @@ import json
 from dataclasses import dataclass
 from typing import Dict
 
-from parse_once import describe, options_for, parser_for
+from parse_once import describe, options_for
 
 from speech2plan.dialogue import Clarifier, DialogueSkills, Question
 from speech2plan.grounding import Grounder
 from speech2plan.parsing.answer_interpreter import AnswerInterpreter
 from speech2plan.parsing.claude_cli import ClaudeCommandLineModel
+from speech2plan.parsing.instruction_parser import InstructionParser
 from speech2plan.world_source import CareWard
 
 # %% the terminal in place of the communication skills
@@ -51,10 +52,10 @@ class ConsoleSkills(DialogueSkills):
 
 
 def main() -> None:
-    options = options_for(__doc__.splitlines()[0], "Bring the cup to the kitchen")
+    options = options_for(__doc__.splitlines()[0], "Bring the insulin to the kitchen")
     world = CareWard().load()
     model = ClaudeCommandLineModel()
-    instruction = parser_for(world, model, options.query_world).parse(
+    instruction = InstructionParser.for_world(world, model).parse(
         options.utterance, speaker="person_console"
     )
 
@@ -67,8 +68,9 @@ def main() -> None:
         interpreter=AnswerInterpreter(model=model),
     ).clarify(instruction)
     if not clarification.confirmed:
-        print("withdrawn, nothing to publish")
+        print("withdrawn, nothing to submit")
         return
+    print(f"item      : {clarification.instruction.item}")
     print("grounding :")
     for outcome in clarification.outcomes:
         print(f"  {describe(outcome)}")

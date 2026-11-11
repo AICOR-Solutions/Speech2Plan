@@ -31,7 +31,6 @@ def test_entity_types_come_from_the_vocabulary(parser):
     assert goal["properties"][str(ReplyKey.ENTITY_TYPE)]["enum"] == [
         "Bathroom",
         "Kitchen",
-        "Thing",
         None,
     ]
 
@@ -50,20 +49,30 @@ def test_every_role_is_offered(parser):
     }
 
 
-def test_parts_of_other_things_are_not_offered():
+def test_only_places_are_offered():
     vocabulary = Vocabulary.from_world(ElevatorBuilding(robot_type=None).load())
     assert "Handle" not in vocabulary.entity_types
-    assert "Cup" in vocabulary.entity_types
+    assert "Cup" not in vocabulary.entity_types
 
 
-def object_schema(parser) -> dict:
+def role_schema(parser, role: ThematicRole) -> dict:
     return parser.reply_schema()["properties"][str(ReplyKey.ROLES)]["properties"][
-        str(ThematicRole.OBJECT)
+        str(role)
     ]
 
 
+def goal_schema(parser) -> dict:
+    return role_schema(parser, ThematicRole.GOAL)
+
+
+def test_the_item_is_only_the_speakers_words(parser):
+    assert role_schema(parser, ThematicRole.OBJECT)["properties"] == {
+        str(ReplyKey.SPOKEN_FORM): {"type": "string"}
+    }
+
+
 def test_a_qualifier_may_only_name_a_floor_of_the_world(parser):
-    qualifier = object_schema(parser)["properties"][str(ReplyKey.QUALIFIERS)]["items"]
+    qualifier = goal_schema(parser)["properties"][str(ReplyKey.QUALIFIERS)]["items"]
     assert qualifier["properties"][str(ReplyKey.ATTRIBUTE)]["enum"] == ["floor"]
     assert qualifier["properties"][str(ReplyKey.VALUE)]["enum"] == [
         "FirstFloor",
@@ -72,7 +81,7 @@ def test_a_qualifier_may_only_name_a_floor_of_the_world(parser):
 
 
 def test_a_reference_relates_once_more(parser):
-    relation = object_schema(parser)["properties"][str(ReplyKey.RELATIONS)]["items"]
+    relation = goal_schema(parser)["properties"][str(ReplyKey.RELATIONS)]["items"]
     assert relation["properties"][str(ReplyKey.RELATION)]["enum"] == ["on", "in"]
     reference = relation["properties"][str(ReplyKey.REFERENCE)]
     assert reference["type"] == "object"
@@ -89,7 +98,7 @@ def test_a_world_without_floors_allows_no_qualifier():
             intents=list(IntentName), types=[TypeEntry(entity_type="Kitchen")]
         ),
     )
-    assert object_schema(parser)["properties"][str(ReplyKey.QUALIFIERS)] == {
+    assert goal_schema(parser)["properties"][str(ReplyKey.QUALIFIERS)] == {
         "type": "array",
         "maxItems": 0,
     }

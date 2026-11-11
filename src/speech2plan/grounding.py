@@ -6,7 +6,6 @@ from typing import List, Optional, Tuple, Type, Union
 
 from krrood.entity_query_language import factories as eql
 from krrood.entity_query_language.predicate import symbolic_function
-from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Agent,
     Furniture,
@@ -18,7 +17,6 @@ from semantic_digital_twin.world_description.world_entity import SemanticAnnotat
 
 from speech2plan.contract import (
     EntityConstraint,
-    GenericType,
     ParsedInstruction,
     Qualifier,
     Relation,
@@ -163,9 +161,10 @@ def relates(
 
 @dataclass
 class Grounder:
-    """Maps entity constraints onto world entities.
+    """Maps the descriptions of places onto the rooms and furniture of the world.
 
-    A constraint becomes an entity query: one variable over the instances of its
+    Only places are grounded: what the robot carries is put on its tray by people, so
+    it is never looked for. A constraint becomes an entity query: one variable over the instances of its
     type, filtered by its qualifiers, and one more variable per relation, ranging
     over the instances of the reference's type and filtered by the reference's own
     constraint, so a description may nest as deep as the speaker's words did.
@@ -174,9 +173,9 @@ class Grounder:
     world: World = field(kw_only=True)
     qualifier_resolver: Optional[QualifierResolver] = field(kw_only=True, default=None)
     searchable_types: Tuple[Type[SemanticAnnotation], ...] = field(
-        kw_only=True, default=(Room, HasGraspCandidates, Furniture)
+        kw_only=True, default=(Room, Furniture)
     )
-    """Annotation bases an utterance may refer to."""
+    """Annotation bases an utterance may name as a place."""
 
     excluded_types: Tuple[Type[SemanticAnnotation], ...] = field(
         kw_only=True, default=(Handle,)
@@ -193,10 +192,10 @@ class Grounder:
             self.preference = AgentStoreyPreference(world=self.world)
 
     def ground(self, instruction: ParsedInstruction) -> List[GroundingOutcome]:
-        """One outcome per filled role."""
+        """One outcome per filled role that names a place."""
         return [
             self.ground_constraint(binding.role, binding.constraint)
-            for binding in instruction.roles
+            for binding in instruction.places
         ]
 
     def searchable_entities(self) -> List[SemanticAnnotation]:
@@ -216,15 +215,7 @@ class Grounder:
         return None
 
     def entities_of_type(self, entity_type: Optional[str]) -> List[SemanticAnnotation]:
-        """Everything of that type the world holds, qualifiers ignored. An unnamed
-        thing is any thing that can be moved, which leaves out rooms and furniture."""
-        if entity_type == GenericType.THING:
-            return [
-                entity
-                for entity in self.searchable_entities()
-                if isinstance(entity, HasGraspCandidates)
-                and not isinstance(entity, (Furniture, Room))
-            ]
+        """Everything of that type the world holds, qualifiers ignored."""
         return [
             entity
             for entity in self.searchable_entities()
@@ -268,8 +259,6 @@ class Grounder:
         instances = self.entities_of_type(constraint.entity_type)
         if not instances:
             return None
-        if constraint.entity_type == GenericType.THING:
-            return eql.variable(HasGraspCandidates, domain=instances)
         return eql.variable(type(instances[0]), domain=instances)
 
     def conditions(self, described, constraint: EntityConstraint) -> Optional[list]:

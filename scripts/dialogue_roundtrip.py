@@ -2,7 +2,8 @@
 """Drive the node through a full dialogue on the local graph, with no robot.
 
 Runs the node, a stand-in for the robot's communication skills, and a probe that
-plays the ROS4HRI side: one tracked person, one voice, one utterance. With no
+plays the ROS4HRI side, one tracked person, one voice, one utterance, and the plan
+executive, taking the task the node submits. With no
 argument the parse is canned, so nothing calls a model; with an utterance the
 real parser runs.
 """
@@ -22,18 +23,19 @@ from typing import Dict, Optional
 
 import rclpy
 from communication_skills.action import Ask, Say
-from hri_actions_msgs.msg import Intent
 from hri_msgs.msg import IdsList, LiveSpeech
 from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.action.server import ServerGoalHandle
 from rclpy.qos import (
     DurabilityPolicy,
     HistoryPolicy,
     QoSProfile,
     ReliabilityPolicy,
 )
+from speech2plan_msgs.action import CarryOutIntent
 from std_msgs.msg import String
 
 from speech2plan.contract import (
@@ -46,12 +48,13 @@ from speech2plan.contract import (
 )
 from speech2plan.dialogue import AnswerKey, Clarifier
 from speech2plan.grounding import Grounder
-from speech2plan.ros.intent_node import Speech2PlanNode, Topic
+from speech2plan.ros.intent_node import Speech2PlanNode
 from speech2plan.ros.skill_client import (
     HumansTopic,
     Ros4HriDialogueSkills,
     SkillPath,
 )
+from speech2plan.ros.task_submission import TaskSkillPath
 from speech2plan.world_source import PrototypeWard
 
 # %% the robot's side
@@ -63,7 +66,7 @@ class SkillServer(Node):
     def __init__(self, answers: Optional[Dict[str, object]] = None):
         super().__init__("fake_communication_skills")
         self.answers = answers or {
-            "object": "living room",
+            "object": "the cup",
             "goal": "first floor",
             str(AnswerKey.CONFIRMED): True,
         }
@@ -104,7 +107,8 @@ class SkillServer(Node):
 
 
 class Probe(Node):
-    """Announces a tracked person, says one thing, and waits for the intent."""
+    """Announces a tracked person, says one thing, and takes the task submitted for
+    it, as the plan executive would."""
 
     def __init__(self, person_id: str = "person_demo", voice_id: str = "voice_demo"):
         super().__init__("speech2plan_probe")
@@ -112,7 +116,13 @@ class Probe(Node):
         self.voice_id = voice_id
         self.arrived = threading.Event()
         self.intent = None
-        self.create_subscription(Intent, Topic.INTENTS, self.on_intent, 10)
+        ActionServer(
+            self,
+            CarryOutIntent,
+            str(TaskSkillPath.CARRY_OUT_INTENT),
+            self.on_task,
+            callback_group=ReentrantCallbackGroup(),
+        )
         self.voices = self.create_publisher(IdsList, HumansTopic.TRACKED_VOICES, 10)
         self.persons = self.create_publisher(IdsList, HumansTopic.TRACKED_PERSONS, 10)
         self.binding = self.create_publisher(
@@ -131,9 +141,11 @@ class Probe(Node):
             LiveSpeech, HumansTopic.SPEECH.format(voice_id=voice_id), 10
         )
 
-    def on_intent(self, message: Intent) -> None:
-        self.intent = message
+    def on_task(self, goal: ServerGoalHandle) -> CarryOutIntent.Result:
+        self.intent = goal.request.intent
         self.arrived.set()
+        goal.succeed()
+        return CarryOutIntent.Result()
 
     def announce(self, timeout: float = 20.0) -> bool:
         """Put one person and one voice on the graph, and bind them.
@@ -180,7 +192,7 @@ class CannedParser:
                 RoleBinding(
                     role=ThematicRole.OBJECT,
                     constraint=EntityConstraint(
-                        entity_type="Cup", spoken_form="the cup"
+                        entity_type=None, spoken_form="the cup"
                     ),
                 ),
                 RoleBinding(

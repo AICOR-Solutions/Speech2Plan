@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Collection, Dict, List, Optional
 
 from semantic_digital_twin.semantic_annotations.natural_language import (
     NaturalLanguageDescription,
@@ -43,6 +43,15 @@ def definite(words: str) -> str:
 def indefinite(words: str) -> str:
     """`words` as a reference to one of several."""
     return f"{'an' if words[0] in 'aeiou' else 'a'} {words}"
+
+
+def bare_noun(spoken_form: Optional[str], determiners: Collection[str]) -> str:
+    """The speaker's words without the `determiners` before them: 'my pills' ->
+    'pills', empty when nothing else was said."""
+    words = (spoken_form or "").lower().split()
+    while words and words[0] in determiners:
+        words = words[1:]
+    return " ".join(words)
 
 
 def is_plural(noun: str) -> bool:
@@ -281,10 +290,7 @@ class EntityDescriber:
     def spoken_noun(self, spoken_form: Optional[str]) -> str:
         """What the speaker called a thing, without the words before it: 'my pills'
         -> 'pills'."""
-        words = (spoken_form or "").lower().split()
-        while words and words[0] in self.words.determiners:
-            words = words[1:]
-        return " ".join(words) or "thing"
+        return bare_noun(spoken_form, self.words.determiners) or "thing"
 
     def comparable(self, phrase: str) -> str:
         """A phrase stripped of what a person varies freely when saying it."""

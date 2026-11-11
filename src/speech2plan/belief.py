@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from speech2plan.contract import GenericType, ParsedInstruction
+from speech2plan.contract import ParsedInstruction
 from speech2plan.description import (
     EntityDescriber,
     plural,
@@ -22,7 +22,7 @@ from speech2plan.grounding import (
 
 @dataclass
 class BeliefReport:
-    """States what the twin holds about the entities an instruction names."""
+    """States what the twin holds about the places an instruction names."""
 
     grounder: Grounder = field(kw_only=True)
     describer: EntityDescriber = field(kw_only=True)
@@ -64,12 +64,8 @@ class BeliefReport:
     def about_candidates(self, outcome: Ambiguity) -> str:
         """Where the entities still in question are."""
         choice = self.describer.choose_between(outcome.candidates)
-        if outcome.constraint.entity_type == GenericType.THING:
-            counted = f"I know of {choice.count} things like that"
-            known = choice.count
-        else:
-            known = len(self.grounder.entities_of_type(outcome.constraint.entity_type))
-            counted = f"I know of {known} {plural(choice.noun, known)}"
+        known = len(self.grounder.entities_of_type(outcome.constraint.entity_type))
+        counted = f"I know of {known} {plural(choice.noun, known)}"
         if known > choice.count:
             counted = f"{counted}, {choice.count} of them on this floor"
         if not choice.is_separable:

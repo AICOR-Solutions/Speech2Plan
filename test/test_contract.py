@@ -15,9 +15,15 @@ from speech2plan.contract import (
 def test_intent_names_match_the_ros4hri_message():
     assert IntentName.BRING_OBJECT == Intent.BRING_OBJECT
     assert IntentName.MOVE_TO == Intent.MOVE_TO
-    assert IntentName.GUIDE == Intent.GUIDE
-    assert IntentName.PLACE_OBJECT == Intent.PLACE_OBJECT
     assert IntentName.RAW_USER_INPUT == Intent.RAW_USER_INPUT
+
+
+def test_only_the_intents_of_the_transport_mission_are_recognised():
+    assert [str(intent) for intent in IntentName] == [
+        Intent.RAW_USER_INPUT,
+        Intent.MOVE_TO,
+        Intent.BRING_OBJECT,
+    ]
 
 
 def test_thematic_roles_are_the_documented_keys():

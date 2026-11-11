@@ -10,7 +10,6 @@ from semantic_digital_twin.world import World
 
 from speech2plan.contract import (
     EntityConstraint,
-    GenericType,
     IntentName,
     ParsedInstruction,
     Qualifier,
@@ -21,7 +20,6 @@ from speech2plan.contract import (
     ThematicRole,
 )
 from speech2plan.exceptions import UnusableReply
-from speech2plan.grounding import Grounder
 from speech2plan.parsing.backend import CompletionRequest, LanguageModel, parse_json
 from speech2plan.placement import QualifierAttribute
 from speech2plan.settings import Prompts, default_settings
@@ -56,9 +54,7 @@ class Exchange:
 
     reply: str = field(kw_only=True)
     response: str = field(kw_only=True)
-    """A <result> of a query, or why the reply was <rejected>."""
-
-    answered_query: bool = field(kw_only=True, default=False)
+    """Why the reply was <rejected>."""
 
 
 # %% parser
@@ -68,7 +64,8 @@ class Exchange:
 class InstructionParser:
     """Turns an utterance into a ParsedInstruction.
 
-    A reply that breaks the rules is returned to the model with what was wrong,
+    Places are described by the types of the world; what the robot carries only by
+    the speaker's words, since people put it on the tray. A reply that breaks the rules is returned to the model with what was wrong,
     because the model named a type or a floor the world lacks, not the speaker.
     """
 
@@ -96,10 +93,8 @@ class InstructionParser:
         return Vocabulary.from_world(world)
 
     @classmethod
-    def for_world(
-        cls, world: World, model: LanguageModel, grounder: Optional[Grounder] = None
-    ) -> InstructionParser:
-        """A parser for one world, which `grounder` grounds against if given."""
+    def for_world(cls, world: World, model: LanguageModel) -> InstructionParser:
+        """A parser for one world."""
         return cls(model=model, vocabulary=cls.vocabulary_of(world))
 
     def follow(self, world: World) -> None:
@@ -125,16 +120,6 @@ class InstructionParser:
             except json.JSONDecodeError as error:
                 problems = [f"the reply is no JSON object: {error}"]
             else:
-                result = self.query_result(parsed, exchanges)
-                if result is not None:
-                    exchanges.append(
-                        Exchange(
-                            reply=reply,
-                            response=f"<result>{result}</result>",
-                            answered_query=True,
-                        )
-                    )
-                    continue
                 problems = self.problems_with(parsed)
                 if not problems:
                     return self.build_instruction(utterance, speaker, parsed)
@@ -146,11 +131,6 @@ class InstructionParser:
                     reply=reply, response=f"<rejected>{'; '.join(problems)}</rejected>"
                 )
             )
-
-    def query_result(self, reply: object, exchanges: List[Exchange]) -> Optional[str]:
-        """The answer to a reply that queries the world, or None when it does not.
-        This parser lets the model query nothing."""
-        return None
 
     def request(self, utterance: str, exchanges: List[Exchange]) -> CompletionRequest:
         """The utterance and every exchange about it so far."""
@@ -208,7 +188,14 @@ class InstructionParser:
                 },
                 str(ReplyKey.ROLES): {
                     "type": "object",
-                    "properties": {str(role): constraint for role in ThematicRole},
+                    "properties": {
+                        str(role): (
+                            self.item_schema()
+                            if role == ThematicRole.OBJECT
+                            else constraint
+                        )
+                        for role in ThematicRole
+                    },
                     "additionalProperties": False,
                 },
                 str(ReplyKey.UNFILLED): {
@@ -228,6 +215,16 @@ class InstructionParser:
                 },
             },
             "required": [str(ReplyKey.INTENT), str(ReplyKey.ROLES)],
+            "additionalProperties": False,
+        }
+
+    @staticmethod
+    def item_schema() -> dict:
+        """What the robot carries: only the speaker's words for it."""
+        return {
+            "type": ["object", "null"],
+            "properties": {str(ReplyKey.SPOKEN_FORM): {"type": "string"}},
+            "required": [str(ReplyKey.SPOKEN_FORM)],
             "additionalProperties": False,
         }
 
@@ -267,8 +264,8 @@ class InstructionParser:
         }
 
     def known_types(self) -> List[str]:
-        """The types of the world, and the one for a thing left unnamed."""
-        return self.vocabulary.entity_types + [str(GenericType.THING)]
+        """The types of the places of the world."""
+        return self.vocabulary.entity_types
 
     def qualifiers_schema(self) -> dict:
         """The qualifiers, which may only name a floor the world has."""
@@ -314,6 +311,8 @@ class InstructionParser:
         for name, payload in roles.items():
             if name not in known_roles:
                 problems.append(f"role {name!r} is not one of {known_roles}")
+            elif payload is not None and name == ThematicRole.OBJECT:
+                problems.extend(self.item_problems(f"roles.{name}", payload))
             elif payload is not None:
                 problems.extend(self.constraint_problems(f"roles.{name}", payload))
         unfilled = reply.get(ReplyKey.UNFILLED, [])
@@ -333,6 +332,21 @@ class InstructionParser:
                 "confidence must map 'intent' and the filled roles to numbers"
             )
         return problems
+
+    @staticmethod
+    def item_problems(path: str, payload: object) -> List[str]:
+        """What is wrong with the description of what the robot carries."""
+        spoken_form = (
+            payload.get(ReplyKey.SPOKEN_FORM) if isinstance(payload, dict) else None
+        )
+        if not isinstance(spoken_form, str) or not spoken_form.strip():
+            return [f"{path} must be an object with the speaker's words in spoken_form"]
+        if set(payload) != {str(ReplyKey.SPOKEN_FORM)}:
+            return [
+                f"{path} takes only spoken_form: the robot does not look for what "
+                "it carries, people put it on the tray"
+            ]
+        return []
 
     def constraint_problems(
         self, path: str, payload: object, nesting: Optional[int] = None
@@ -425,9 +439,17 @@ class InstructionParser:
         ]
 
     def build_roles(self, payload: dict) -> List[RoleBinding]:
-        """A binding for every role the model filled."""
+        """A binding for every role the model filled; what the robot carries is only
+        the speaker's words."""
         bindings = (
-            (role_name, self.build_constraint(constraint_payload))
+            (
+                role_name,
+                (
+                    self.build_item(constraint_payload)
+                    if role_name == ThematicRole.OBJECT
+                    else self.build_constraint(constraint_payload)
+                ),
+            )
             for role_name, constraint_payload in payload.items()
         )
         return [
@@ -435,6 +457,15 @@ class InstructionParser:
             for role_name, constraint in bindings
             if constraint is not None
         ]
+
+    @staticmethod
+    def build_item(payload: Optional[dict]) -> Optional[EntityConstraint]:
+        """The speaker's words for what the robot carries, or None when unfilled."""
+        if payload is None:
+            return None
+        return EntityConstraint(
+            entity_type=None, spoken_form=payload[ReplyKey.SPOKEN_FORM]
+        )
 
     def build_constraint(self, payload: Optional[dict]) -> Optional[EntityConstraint]:
         """An EntityConstraint, or None when the role was left unfilled.
