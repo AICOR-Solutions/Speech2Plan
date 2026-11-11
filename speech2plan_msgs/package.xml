@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>speech2plan_msgs</name>
+  <version>0.0.1</version>
+  <description>The skills between Speech2Plan and the plan executive: submitting the tasks people give, and asking people for help while carrying them out.</description>
+  <maintainer email="marvin8@uni-bremen.de">Marvin Dufner</maintainer>
+  <license>LGPL-3.0-only</license>
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <depend>action_msgs</depend>
+  <depend>hri_actions_msgs</depend>
+  <depend>std_skills</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+
+    <skill content-type="yaml">
+        id: carry_out_intent
+        version: 1.0.0
+        description: |
+          Build the plan of an intent whose places name entities of the world, and
+          perform it, asking people for help through ask_for_help. Feedback names
+          each step as it starts and whether the robot waits for people or asks
+          for help; the result lists what happened at the tray.
+        interface: action
+        default_interface_path: /skill/carry_out_intent
+        datatype: speech2plan_msgs/action/CarryOutIntent
+        functional_domains:
+          - navigation
+        parameters:
+          in:
+            - name: intent
+              type: object
+              required: true
+              description: |
+                The hri_actions_msgs/Intent to carry out, __intent_move_to__ or
+                __intent_bring_object__.
+            - name: meta.priority
+              type: integer
+              default: 128
+              description: Between 0 and 255.
+          out:
+            - name: result.error_code
+              type: integer
+              description: ROS_ENOERR once the plan was performed.
+    </skill>
+
+    <skill content-type="yaml">
+        id: ask_for_help
+        version: 1.0.0
+        description: |
+          Ask the people around the robot a question they answer with yes or no:
+          to load or unload the tray, or whether to try a failed step again.
+        interface: action
+        default_interface_path: /skill/ask_for_help
+        datatype: speech2plan_msgs/action/AskForHelp
+        functional_domains:
+          - communication
+        parameters:
+          in:
+            - name: text
+              type: string
+              required: true
+              description: What the robot says, ending in the question.
+            - name: problem
+              type: string
+              required: true
+              description: load_tray, unload_tray or step_failed.
+            - name: person_id
+              type: string
+              default: ""
+              description: If targeting a specific person, the ID of the person.
+          out:
+            - name: yes
+              type: boolean
+              description: Whether the answer was yes.
+    </skill>
+  </export>
+</package>

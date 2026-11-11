@@ -1,0 +1,42 @@
+# Carry out a task a person gave the robot: the plan executive builds the plan of the
+# intent and performs it, one step after the other, asking people for help where a
+# step needs them or fails, and planning again from where it stands once they helped.
+
+std_skills/Meta meta
+
+# The task, whose places name entities of the world and whose object is the speaker's
+# word for what the robot brings (REP-155).
+hri_actions_msgs/Intent intent
+
+---
+
+# ROS_ENOERR once the plan was performed; ROS_ENOTSUP for an intent no plan is built
+# for; ROS_EBADMSG for one whose roles name nothing the plan can act on;
+# ROS_ECANCELED when the caller canceled it; ROS_EOTHER when performing the plan failed
+# and people could not help. error_msg says why in words.
+std_skills/Result result
+
+# What happened at the tray, in order, as it is logged: "collected the insulin in 1.53",
+# "delivered the insulin to 2.58".
+string[] records
+
+---
+
+std_skills/Feedback feedback
+
+# What the robot is doing.
+uint8 RUNNING = 0
+uint8 WAITING_FOR_PEOPLE = 1
+uint8 ASKING_FOR_HELP = 2
+uint8 state
+
+# The step being performed, as a person would name it.
+string step
+
+# The number of that step, counted from 1, and how many steps the plan has. A plan made
+# again after people helped counts anew.
+uint16 step_number
+uint16 step_count
+
+# While ASKING_FOR_HELP: what went wrong, in words.
+string problem

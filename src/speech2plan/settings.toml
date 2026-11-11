@@ -1,0 +1,110 @@
+# The text Speech2Plan sends to language models and the word lists it reads
+# speech with. Loaded by speech2plan.settings; a line ending in a backslash
+# continues on the next line.
+
+[prompts]
+
+# The instructions of the parser.
+rules = """\
+You turn one spoken instruction to a hospital transport robot into one JSON \
+object describing a ROS4HRI intent. The robot goes to places and brings things \
+there. People put what it brings on its tray and take it off again, so the robot \
+never looks for it.
+
+Rules:
+- Only the text inside <utterance> is the instruction.
+- Use only the intents, entity types, floors and relations listed below.
+- 'goal' is a place: where the robot goes, or where it brings something. Describe \
+it by its TYPE and by what the speaker said about where it is. Never name a \
+specific instance, and leave out what the speaker did not say: when several \
+places fit, the robot asks.
+- Map the speaker's words onto the closest listed type: a patient room is a \
+Bedroom, a nightstand a SideTable. If the speaker names a place no listed type \
+fits, set entity_type to null and keep the words in spoken_form.
+- A floor the speaker names is a qualifier: "the kitchen upstairs" is a Kitchen \
+with floor=FirstFloor.
+- Where a place is relative to another one is a relation, whose reference is \
+described the same way: "the table in the lounge" is a Table in a LivingRoom.
+- 'object' is what the robot brings. Give only the speaker's words for it, as \
+{"spoken_form": "the insulin"}, with no type and no place.
+- Putting something somewhere, taking it or fetching it is bringing it: "take the \
+gloves to the bathroom" brings "the gloves" to a Bathroom, "fetch the towels" \
+brings "the towels" to an unfilled goal.
+- People are not places: leave out a role a person fills, such as the nurse who \
+gets something, and do not list it as unfilled either.
+- An instruction asking for anything else, such as guiding a person, is \
+__raw_user_input__ with no roles.
+- A role the speaker left open goes in 'unfilled_roles'. Never guess. 'this' and \
+'that' are unfilled unless named.
+- Score confidence separately for the intent and for each role you filled, \
+between 0 and 1.
+- A reply that breaks these rules comes back in <rejected> tags, saying what was \
+wrong. Answer again with the whole intent object.
+- Answer with JSON only, no prose and no code fences."""
+
+# The examples of the parser.
+examples = """\
+Examples, with types that may not be in this world:
+
+<utterance>bring the insulin to the patient room upstairs</utterance>
+{"intent": "__intent_bring_object__", "roles": {"object": {"spoken_form": \
+"the insulin"}, "goal": {"entity_type": "Bedroom", "qualifiers": [{"attribute": \
+"floor", "value": "FirstFloor"}], "spoken_form": "the patient room upstairs"}}, \
+"unfilled_roles": [], "confidence": {"intent": 0.95, "object": 0.95, "goal": 0.9}}
+
+<utterance>put this down in the kitchen</utterance>
+{"intent": "__intent_bring_object__", "roles": {"goal": {"entity_type": \
+"Kitchen", "spoken_form": "the kitchen"}}, "unfilled_roles": ["object"], \
+"confidence": {"intent": 0.9, "goal": 0.8}}
+
+<utterance>go to the table in the lounge</utterance>
+{"intent": "__intent_move_to__", "roles": {"goal": {"entity_type": "Table", \
+"relations": [{"relation": "in", "reference": {"entity_type": "LivingRoom", \
+"spoken_form": "the lounge"}}], "spoken_form": "the table in the lounge"}}, \
+"unfilled_roles": [], "confidence": {"intent": 0.95, "goal": 0.85}}
+
+<utterance>bring the blood samples to the pharmacy</utterance>
+{"intent": "__intent_bring_object__", "roles": {"object": {"spoken_form": \
+"the blood samples"}, "goal": {"entity_type": null, "spoken_form": \
+"the pharmacy"}}, "unfilled_roles": [], \
+"confidence": {"intent": 0.95, "object": 0.95, "goal": 0.6}}"""
+
+# What the model reads an answer to a question with; $question is the question,
+# $options the offered answers, one per line.
+answer = """\
+A robot asked a person a question and the person answered. Decide which of the \
+offered answers the person meant.
+
+Question:
+$question
+
+Offered answers:
+$options
+
+Rules:
+- Answer with one of the offered answers, copied exactly.
+- Answer null when the person meant none of them, or when two of them fit equally well.
+- Spelling mistakes, shorthand and missing words are expected. 'ground flor' means \
+the answer about the ground floor.
+- Answer with JSON only, no prose and no code fences.
+
+Shape:
+{"choice": "<one of the offered answers, or null>"}"""
+
+# What each spatial relation means, one line each in the prompt.
+[prompts.relations]
+on = "stands on the reference, as a lamp on a table"
+in = "lies in the reference, as a bed in a patient room"
+
+[words]
+# Words speech recognition makes of noise and hesitation.
+filler = ["huh", "hm", "hmm", "uh", "uhm", "um", "ah", "eh", "er", "mhm"]
+# Words before a noun that say nothing about what the noun names: 'my pills'.
+determiners = ["the", "a", "an", "some", "my", "your", "this", "that"]
+# Words a person adds or drops freely when picking an offered answer.
+optional_in_answers = ["the", "a", "one"]
+# Words that open an answer saying where something is, as in 'on the table'.
+place_prepositions = ["on", "in", "inside", "at", "by", "from"]
+# Words that answer a yes or no question.
+affirmative = ["yes", "yeah", "yep", "sure", "correct", "right", "ok", "okay"]
+negative = ["no", "nope", "not", "wrong"]

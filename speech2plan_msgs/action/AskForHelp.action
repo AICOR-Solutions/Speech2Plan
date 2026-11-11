@@ -1,0 +1,30 @@
+# Ask the people around the robot for help, as a question they answer with yes or no:
+# to put an item on the tray or take it off, or whether to try a failed step again.
+# Served by the HRI module, which says the question and hears the answer.
+
+std_skills/Meta meta
+
+# Why the robot asks.
+string LOAD_TRAY = load_tray
+string UNLOAD_TRAY = unload_tray
+string STEP_FAILED = step_failed
+string problem
+
+# What the robot says, ending in the question: "Please put the insulin on my tray. Is it
+# on the tray now?"
+string text
+
+# The ID of the person to ask; if empty, whoever is there.
+string person_id
+
+---
+
+# ROS_ENOERR once someone answered, ROS_EOTHER when nobody did.
+std_skills/Result result
+
+# Whether the answer was yes.
+bool yes
+
+---
+
+std_skills/Feedback feedback
